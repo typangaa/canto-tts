@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "canto-tts"
+version = "0.1.0"
+description = "Open-source Cantonese (Hong Kong) text-to-speech — CPU-first ONNX inference SDK"
+readme = "README_PYPI.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [{ name = "typangaa" }]
+
+# CORE runtime deps — deliberately torch-free.
+# ONNX is the primary (CPU-first) inference runtime.
+dependencies = [
+  "onnxruntime>=1.16",
+  # Cantonese text → Jyutping G2P — the ONLY G2P dep; do NOT add espeak or others.
+  "canto-hk-g2p",
+  "huggingface_hub>=0.20",
+  "numpy",
+  "soundfile",
+  # Base-vocab tokenization for the ONNX backend's tokenizer-free text encoder
+  # (backends/onnx_backend.py's _PhonemeEncoder) — added phoneme/pause tokens
+  # are matched separately, everything else falls through to sentencepiece.
+  "sentencepiece",
+]
+
+[project.urls]
+Homepage   = "https://github.com/typangaa/canto-tts"
+Repository = "https://github.com/typangaa/canto-tts"
+
+[project.optional-dependencies]
+torch = [
+  "torch>=2.0",
+  "torchaudio>=2.0",
+  # Pinned: MOSS-TTS-Nano uses trust_remote_code model code that is
+  # incompatible with transformers >=4.58 due to upstream API changes.
+  "transformers==4.57.1",
+]
+demo = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "jinja2>=3.1",
+  "python-multipart",
+]
+# Meta-extra: pulls in all optional feature sets.
+all = ["canto-tts[torch,demo]"]
+
+[project.scripts]
+"canto-tts"      = "canto_tts.cli:main"
+"canto-tts-demo" = "canto_tts.api.app:main"
+
+# ---------------------------------------------------------------------------
+# uv-specific dev dependency group (not pip-installable).
+# Install with: uv sync --group dev
+# ---------------------------------------------------------------------------
+[dependency-groups]
+dev = [
+  "pytest",
+  "ruff",
+]
+
+# ---------------------------------------------------------------------------
+# Build / discovery
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src/canto_tts"]

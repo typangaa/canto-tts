@@ -1,0 +1,49 @@
+# ------------------------------------------------------------
+# canto-tts — CPU-first demo stack
+# CPU-only: no GPU deploy blocks — GPU production images
+# belong in a separate repository.
+#
+# Usage:
+#   docker compose up --build          # first run (builds image + downloads models)
+#   docker compose up                  # subsequent runs (models cached in volume)
+#   docker compose down                # stop (cache volume retained)
+#   docker compose down -v             # stop + delete model cache volume
+# ------------------------------------------------------------
+
+services:
+  demo:
+    build:
+      # Build context is the repo root so COPY . /app picks up
+      # pyproject.toml, src/, etc. from the right location.
+      context: ..
+      dockerfile: docker/Dockerfile
+
+    # Tag the resulting image for easy local reference.
+    image: canto-tts:latest
+
+    ports:
+      # host_port:container_port — expose the FastAPI demo server.
+      - "8000:8000"
+
+    volumes:
+      # Named volume for Hugging Face model weights.
+      # Models are downloaded on first startup and reused on
+      # subsequent runs, avoiding repeated Hub downloads.
+      - huggingface_cache:/root/.cache/huggingface
+      # ⚠️ Weights are NOT published yet (see repo README Status section).
+      # Until then, bind-mount a local scripts/export_onnx.py output dir and
+      # uncomment the matching env var below:
+      # - /path/to/your/exported/onnx_weights:/model:ro
+
+    # environment:
+    #   CANTO_TTS_CHECKPOINT: /model   # see the volumes note above
+    #   CANTO_TTS_PORT: "8000"
+
+    # Restart the container automatically unless explicitly stopped,
+    # so the demo server survives host reboots during development.
+    restart: unless-stopped
+
+# Declare the named volume so Docker manages its lifecycle
+# independently of the container.
+volumes:
+  huggingface_cache:

@@ -1,0 +1,16 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.egg-info
+build/
+dist/
+.pytest_cache
+tests/
+docs/
+examples/
+docker/
+.github/
+onnx_weights/
+*.wav
+.DS_Store
