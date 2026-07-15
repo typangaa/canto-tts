@@ -75,7 +75,17 @@ class CantoTTS:
     # Public API
     # ------------------------------------------------------------------
 
-    def synthesize(self, text: str, out_path: str, **kwargs) -> str:
+    def synthesize(
+        self,
+        text: str,
+        out_path: str,
+        *,
+        quality: str | None = None,
+        max_attempts: int = 3,
+        best_of_n: int = 4,
+        asr_backend: str = "whisper",
+        **kwargs,
+    ) -> str:
         """Synthesise *text* and write audio to *out_path*.
 
         Parameters
@@ -84,15 +94,57 @@ class CantoTTS:
             Cantonese text (Traditional Chinese script).
         out_path:
             Destination ``.wav`` file path.
+        quality:
+            ``None`` (default) — a single draw, cheapest/fastest, matches the
+            backend's raw behavior exactly.
+            ``"duration_filter"`` — up to `max_attempts` draws, keeps the one
+            whose duration best matches the phoneme-length-calibrated
+            expectation (catches truncation/runaway-looping). No extra deps.
+            ``"best_of_n"`` — `best_of_n` independent draws, transcribed via a
+            local ASR model and reranked by character-error-rate vs `text`.
+            Requires an ASR extra — see `asr_backend`.
+        max_attempts:
+            Draw budget for ``quality="duration_filter"``.
+        best_of_n:
+            Candidate count for ``quality="best_of_n"``.
+        asr_backend:
+            ASR reranker for ``quality="best_of_n"``: ``"whisper"`` (default,
+            a Cantonese fine-tune of whisper-small, ``canto-tts[quality]``,
+            torch-free — measured most accurate of all options tested) or
+            ``"sensevoice"`` (SenseVoice-Small, ``canto-tts[quality-sensevoice]``
+            — ~7x faster per candidate but less accurate than the whisper
+            default; pulls in torch and a non-OSI ModelScope model license).
+            See `canto_tts.quality` module docstring for the measured
+            comparison.
         **kwargs:
-            Backend-specific keyword arguments (e.g. ``ref_audio``).
+            Backend-specific keyword arguments (e.g. ``ref_audio``), forwarded
+            to every draw.
 
         Returns
         -------
         str
             The resolved output path (same as *out_path* on success).
         """
-        return self._backend.synthesize(text, out_path, **kwargs)
+        if quality is None:
+            return self._backend.synthesize(text, out_path, **kwargs)
+        if quality == "duration_filter":
+            from canto_tts.quality import duration_filter_synthesize
+
+            return duration_filter_synthesize(
+                self._backend, text, out_path, max_attempts=max_attempts, synth_kwargs=kwargs
+            )
+        if quality == "best_of_n":
+            from canto_tts.quality import best_of_n_synthesize
+
+            return best_of_n_synthesize(
+                self._backend,
+                text,
+                out_path,
+                best_of_n=best_of_n,
+                asr_backend=asr_backend,
+                synth_kwargs=kwargs,
+            )
+        raise ValueError(f"Unknown quality mode {quality!r} — expected None, 'duration_filter', or 'best_of_n'.")
 
     def to_phoneme(self, text: str) -> str:
         """Convert *text* to Jyutping phoneme string.

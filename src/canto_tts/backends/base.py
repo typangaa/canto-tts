@@ -44,6 +44,40 @@ def adaptive_max_new_frames(phoneme: str, hard_cap: int = 375) -> int:
     return max(ADAPTIVE_MIN_FRAMES, min(hard_cap, math.ceil(expected_frames)))
 
 
+def expected_duration_seconds(phoneme: str) -> float:
+    """Central (not safety-margined) expected output duration for a phoneme
+    string, using the SAME calibration constant as adaptive_max_new_frames
+    (median duration/phoneme-len ratio across real generation draws) — this is
+    the "what does a normal draw look like" anchor for backends/quality.py's
+    duration-filter, as opposed to adaptive_max_new_frames' generous upper
+    bound sized to avoid truncating legitimate long utterances."""
+    return ADAPTIVE_SEC_PER_PHONCHAR * max(len(phoneme), 1)
+
+
+def char_error_rate(reference: str, hypothesis: str) -> float:
+    """Character-level edit-distance rate: edit_distance(ref, hyp) / len(ref).
+
+    Self-contained (no jiwer/external CER dep) so backends/quality.py's
+    best-of-N ASR rerank doesn't pull in a new dependency beyond ASR itself —
+    only used for RELATIVE ranking among candidates of the same known text, so
+    it doesn't need jiwer's punctuation-normalization sophistication (that
+    matters for reported gate metrics in the private eval harness, not here).
+    """
+    ref = reference.strip()
+    hyp = hypothesis.strip()
+    if not ref:
+        return 0.0 if not hyp else 1.0
+    m, n = len(ref), len(hyp)
+    prev = list(range(n + 1))
+    for i in range(1, m + 1):
+        curr = [i] + [0] * n
+        for j in range(1, n + 1):
+            cost = 0 if ref[i - 1] == hyp[j - 1] else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev = curr
+    return prev[n] / m
+
+
 def safe_prepare_text(text: str) -> str:
     """Stock CJK-branch behaviour for ALL inputs (no upper-casing / padding).
 

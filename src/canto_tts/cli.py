@@ -49,6 +49,11 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
     synth_kwargs: dict = {}
     if args.ref_audio:
         synth_kwargs["ref_audio"] = args.ref_audio
+    if args.quality:
+        synth_kwargs["quality"] = args.quality
+        synth_kwargs["max_attempts"] = args.max_attempts
+        synth_kwargs["best_of_n"] = args.best_of_n
+        synth_kwargs["asr_backend"] = args.asr_backend
 
     out = tts.synthesize(args.text, args.out, **synth_kwargs)
     print(out)
@@ -136,6 +141,41 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="BACKEND",
         help="Inference backend: 'onnx' (default, CPU-first) or 'torch'.",
+    )
+    syn.add_argument(
+        "--quality",
+        choices=["duration_filter", "best_of_n"],
+        default=None,
+        metavar="MODE",
+        help="Opt-in inference-time quality mode (default: single draw, fastest). "
+             "'duration_filter': up to --max-attempts draws, keep the one whose "
+             "duration best matches expectation (no extra deps). 'best_of_n': "
+             "generate --best-of-n draws, keep the lowest-CER one per a local ASR "
+             "rerank (requires `pip install canto-tts[quality]`).",
+    )
+    syn.add_argument(
+        "--max-attempts",
+        type=int,
+        default=3,
+        metavar="N",
+        help="Draw budget for --quality duration_filter (default: 3).",
+    )
+    syn.add_argument(
+        "--best-of-n",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Candidate count for --quality best_of_n (default: 4).",
+    )
+    syn.add_argument(
+        "--asr-backend",
+        choices=["whisper", "sensevoice"],
+        default="whisper",
+        metavar="BACKEND",
+        help="ASR reranker for --quality best_of_n: 'whisper' (default, "
+             "faster-whisper, torch-free, uses a Cantonese-fine-tuned small "
+             "model) or 'sensevoice' (~7x faster per candidate, requires "
+             "`pip install canto-tts[quality-sensevoice]`, adds torch).",
     )
     syn.set_defaults(func=_cmd_synthesize)
 

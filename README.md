@@ -63,6 +63,8 @@ Optional extras:
 |-------|-------------|
 | `canto-tts[demo]` | FastAPI demo server (`canto-tts-demo` command) |
 | `canto-tts[torch]` | PyTorch backend |
+| `canto-tts[quality]` | `quality="best_of_n"` with the default ASR reranker (torch-free) — see [Quality Modes](#quality-modes-opt-in-inference-time-reranking) |
+| `canto-tts[quality-sensevoice]` | `quality="best_of_n"` with the faster `asr_backend="sensevoice"` reranker (adds torch) |
 | `canto-tts[dev]`  | Dev / test tools |
 
 ---
@@ -102,6 +104,33 @@ canto-tts synthesize "..." -o out.wav --backend onnx --checkpoint /path/to/onnx_
 
 Once weights are published, `--checkpoint` becomes optional (defaults to the official repo).
 Run `canto-tts --help` for all commands.
+
+---
+
+## Quality Modes (opt-in inference-time reranking)
+
+`synthesize()` 預設淨係跑一次 draw(最快)。兩種 opt-in `quality=` mode 都唔改 model 本身,淨係揀邊個 draw 好過留低:
+
+- `quality="duration_filter"`:最多跑 `max_attempts`(default 3)次,揀 duration 最貼近 phoneme-length 預期嘅一個。捕捉最常見嘅兩種 catastrophic AR-codec 失敗(過早截斷 / 無限循環)。**唔使裝額外依賴**,一停到 in-range 嘅 draw 就即刻停,唔一定跑晒個 budget。
+- `quality="best_of_n"`:跑 `best_of_n`(default 4)次,每次用本地 ASR model 轉錄,揀同輸入文字 character-error-rate(CER)最低嘅一個。捕捉 duration 篩唔到嘅問題(錯調、發音錯、code-switch 段落含糊)。需要 `canto-tts[quality]`(`asr_backend="whisper"`,default)或 `canto-tts[quality-sensevoice]`(`asr_backend="sensevoice"`)。
+
+```python
+tts.synthesize(text, "out.wav", quality="duration_filter", max_attempts=3)
+tts.synthesize(text, "out.wav", quality="best_of_n", best_of_n=4, asr_backend="whisper")
+```
+
+```bash
+canto-tts synthesize "..." -o out.wav --quality best_of_n --best-of-n 4 --asr-backend whisper
+```
+
+`asr_backend` options for `quality="best_of_n"` (measured on this project's own generation output — mean CER = the ASR's own transcription error vs. known text, i.e. how sharp a reranking signal it gives, not a general-purpose ASR quality claim):
+
+| `asr_backend` | Extra | Mean CER | Speed | Dependency footprint |
+|---|---|---|---|---|
+| `"whisper"` (default) | `canto-tts[quality]` | 0.036 (most accurate) | ~1.3s/candidate | torch-free (faster-whisper / CTranslate2, a Cantonese fine-tune of whisper-small) |
+| `"sensevoice"` | `canto-tts[quality-sensevoice]` | 0.053 | ~0.18s/candidate (~7x faster) | pulls in torch + torchaudio; non-OSI ModelScope model license (commercial use permitted) |
+
+See [`canto_tts/quality.py`](src/canto_tts/quality.py)'s module docstring for the full tradeoff writeup.
 
 ---
 

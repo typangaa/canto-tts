@@ -41,6 +41,17 @@ tts.synthesize("我哋一齊去 IFC food court 食飯。", "codeswitching.wav")
 Once weights are published to HuggingFace, `CantoTTS()` with no arguments will
 auto-download and cache them via the Hub (`~/.cache/huggingface/hub/`).
 
+## Quality Modes (opt-in)
+
+Two opt-in `quality=` modes trade extra compute for a more reliable draw, without touching the model:
+
+```python
+tts.synthesize(text, "out.wav", quality="duration_filter", max_attempts=3)   # no extra deps
+tts.synthesize(text, "out.wav", quality="best_of_n", best_of_n=4)            # needs canto-tts[quality]
+```
+
+`quality="best_of_n"` reranks N draws by ASR character-error-rate; pass `asr_backend="sensevoice"` (needs `canto-tts[quality-sensevoice]`) for ~7x faster reranking at a small accuracy cost. Full writeup: [GitHub README](https://github.com/typangaa/canto-tts#quality-modes-opt-in-inference-time-reranking).
+
 ## Limitations
 
 | | |

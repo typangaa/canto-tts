@@ -44,8 +44,30 @@ demo = [
   "jinja2>=3.1",
   "python-multipart",
 ]
+# quality="best_of_n" inference mode (canto_tts.quality) — ASR-based rerank
+# among N independent draws. Not core: adds real weight (a Whisper model
+# download) for a mode most callers won't use (quality="duration_filter"
+# needs none of this). Default asr_backend="whisper" only needs this extra
+# (torch-free, faster-whisper/CTranslate2 — always the
+# alvanlii/whisper-small-cantonese fine-tune, which ships its own
+# CTranslate2 bundle on HuggingFace).
+quality = [
+  "faster-whisper>=1.0",
+]
+# asr_backend="sensevoice" alternative for quality="best_of_n" — ~7x faster
+# per candidate than the whisper default, but funasr hard-requires torch even
+# for CPU inference, so this stays a separate (heavier) extra rather than
+# folding into `quality`. See canto_tts/quality.py's module docstring for the
+# measured accuracy/speed comparison.
+quality-sensevoice = [
+  "funasr",
+  "modelscope",
+  "torch>=2.0",
+  "torchaudio>=2.0",
+  "opencc-python-reimplemented",
+]
 # Meta-extra: pulls in all optional feature sets.
-all = ["canto-tts[torch,demo]"]
+all = ["canto-tts[torch,demo,quality,quality-sensevoice]"]
 
 [project.scripts]
 "canto-tts"      = "canto_tts.cli:main"
