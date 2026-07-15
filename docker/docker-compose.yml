@@ -31,13 +31,18 @@ services:
       # subsequent runs, avoiding repeated Hub downloads.
       - huggingface_cache:/root/.cache/huggingface
       # ⚠️ Weights are NOT published yet (see repo README Status section).
-      # Until then, bind-mount a local scripts/export_onnx.py output dir and
-      # uncomment the matching env var below:
-      # - /path/to/your/exported/onnx_weights:/model:ro
+      # Bind-mounted local scripts/export_onnx.py output dir (see matching
+      # CANTO_TTS_CHECKPOINT env var below) -- local-testing bundle only,
+      # baked with a placeholder default-voice clip, NOT for public release.
+      # NOTE: relative bind-mount paths resolve against this compose file's
+      # own directory (docker/), NOT the repo root -- so this must be
+      # "../onnx_weights" to reach the repo-root onnx_weights/ produced by
+      # `scripts/export_onnx.py --output-dir onnx_weights/` (run from repo root).
+      - ../onnx_weights:/model:ro
 
-    # environment:
-    #   CANTO_TTS_CHECKPOINT: /model   # see the volumes note above
-    #   CANTO_TTS_PORT: "8000"
+    environment:
+      CANTO_TTS_CHECKPOINT: /model   # see the volumes note above
+      CANTO_TTS_PORT: "8000"
 
     # Restart the container automatically unless explicitly stopped,
     # so the demo server survives host reboots during development.
