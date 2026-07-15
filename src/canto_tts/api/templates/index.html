@@ -6,215 +6,7 @@
   <title>canto-tts demo — 廣東話語音合成</title>
   <meta name="description" content="Self-hosted Cantonese HK text-to-speech demo powered by canto-tts (ONNX Runtime, CPU-first)." />
 
-  <style>
-    /* ── Design tokens ──────────────────────────────────────────── */
-    :root {
-      --bg:        #0f1117;
-      --surface:   #1a1d27;
-      --surface2:  #252836;
-      --border:    #333650;
-      --accent:    #7c6af7;
-      --accent-glow: rgba(124, 106, 247, 0.35);
-      --accent-hover: #9b8dfa;
-      --text:      #e8e9f0;
-      --text-muted:#9496a8;
-      --warning-bg:#2b2210;
-      --warning-border:#a07c2a;
-      --warning-text:#f0c060;
-      --error-bg:  #2b1010;
-      --error-text:#f06060;
-      --radius:    12px;
-      --radius-sm: 8px;
-      --transition: 0.2s ease;
-    }
-
-    /* ── Reset ──────────────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem 1rem;
-    }
-
-    /* ── Card ───────────────────────────────────────────────────── */
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 2.5rem 2.5rem 2rem;
-      width: 100%;
-      max-width: 620px;
-      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
-    }
-
-    /* ── Header ─────────────────────────────────────────────────── */
-    header {
-      margin-bottom: 1.75rem;
-      text-align: center;
-    }
-    header h1 {
-      font-size: 1.75rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      background: linear-gradient(135deg, var(--accent-hover) 0%, #b8aafb 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      margin-bottom: 0.4rem;
-    }
-    header p.subtitle {
-      color: var(--text-muted);
-      font-size: 0.92rem;
-    }
-
-    /* ── Warning banner ─────────────────────────────────────────── */
-    .warning-banner {
-      background: var(--warning-bg);
-      border: 1px solid var(--warning-border);
-      border-radius: var(--radius-sm);
-      padding: 0.65rem 1rem;
-      font-size: 0.85rem;
-      color: var(--warning-text);
-      margin-bottom: 1.75rem;
-      display: flex;
-      align-items: flex-start;
-      gap: 0.5rem;
-      line-height: 1.5;
-    }
-    .warning-banner .icon { flex-shrink: 0; font-size: 1rem; }
-
-    /* ── Form ───────────────────────────────────────────────────── */
-    label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-bottom: 0.5rem;
-    }
-
-    textarea#text-input {
-      width: 100%;
-      min-height: 120px;
-      resize: vertical;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      color: var(--text);
-      font-size: 1rem;
-      line-height: 1.6;
-      padding: 0.75rem 1rem;
-      outline: none;
-      transition: border-color var(--transition), box-shadow var(--transition);
-      font-family: inherit;
-    }
-    textarea#text-input:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-glow);
-    }
-    textarea#text-input::placeholder { color: var(--text-muted); }
-
-    .char-count {
-      text-align: right;
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      margin-top: 0.3rem;
-      margin-bottom: 1.25rem;
-      transition: color var(--transition);
-    }
-    .char-count.over { color: var(--error-text); }
-
-    /* ── Button ─────────────────────────────────────────────────── */
-    button#synth-btn {
-      width: 100%;
-      padding: 0.85rem;
-      background: var(--accent);
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 700;
-      border: none;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-      letter-spacing: 0.02em;
-      transition: background var(--transition), box-shadow var(--transition), transform 0.1s ease;
-    }
-    button#synth-btn:hover:not(:disabled) {
-      background: var(--accent-hover);
-      box-shadow: 0 4px 20px var(--accent-glow);
-    }
-    button#synth-btn:active:not(:disabled) { transform: scale(0.98); }
-    button#synth-btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-
-    /* ── Status / spinner ───────────────────────────────────────── */
-    #status {
-      min-height: 1.4rem;
-      font-size: 0.88rem;
-      text-align: center;
-      margin-top: 1rem;
-      color: var(--text-muted);
-    }
-    #status.error { color: var(--error-text); }
-
-    .spinner {
-      display: inline-block;
-      width: 0.9em;
-      height: 0.9em;
-      border: 2px solid currentColor;
-      border-right-color: transparent;
-      border-radius: 50%;
-      vertical-align: middle;
-      animation: spin 0.7s linear infinite;
-      margin-right: 0.4em;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ── Audio player ───────────────────────────────────────────── */
-    #audio-section {
-      margin-top: 1.5rem;
-      display: none;
-    }
-    #audio-section label { margin-bottom: 0.6rem; }
-
-    audio#player {
-      width: 100%;
-      height: 40px;
-      border-radius: var(--radius-sm);
-      accent-color: var(--accent);
-    }
-    /* Tint audio control background */
-    audio#player::-webkit-media-controls-panel { background: var(--surface2); }
-
-    .download-link {
-      display: block;
-      text-align: right;
-      font-size: 0.8rem;
-      color: var(--accent-hover);
-      text-decoration: none;
-      margin-top: 0.4rem;
-    }
-    .download-link:hover { text-decoration: underline; }
-
-    /* ── Footer ─────────────────────────────────────────────────── */
-    footer {
-      margin-top: 2rem;
-      text-align: center;
-      font-size: 0.78rem;
-      color: var(--text-muted);
-    }
-    footer a { color: var(--text-muted); text-decoration: underline; }
-    footer a:hover { color: var(--text); }
-  </style>
+  <link rel="stylesheet" href="/static/playground.css" />
 </head>
 <body>
 
@@ -235,6 +27,16 @@
 
   <form id="synth-form" autocomplete="off">
     <label for="text-input">輸入文字 / Enter text</label>
+
+    <!-- Example prompt chips (B) -->
+    <div class="chips-row" id="chips-row" aria-label="Example sentences">
+      <button type="button" class="chip" data-sentence="多謝晒，今日天氣幾好。">多謝晒，今日天氣幾好。</button>
+      <button type="button" class="chip" data-sentence="我哋一齊去 IFC food court 食飯。">我哋一齊去 IFC food court 食飯。</button>
+      <button type="button" class="chip" data-sentence="早晨，今日開會定幾點？">早晨，今日開會定幾點？</button>
+      <button type="button" class="chip" data-sentence="呢個 project 幾時 deadline 呀？">呢個 project 幾時 deadline 呀？</button>
+      <button type="button" class="chip" data-sentence="唔該幫我叫杯凍檸茶，走冰。">唔該幫我叫杯凍檸茶，走冰。</button>
+    </div>
+
     <textarea
       id="text-input"
       name="text"
@@ -243,6 +45,16 @@
       spellcheck="false"
     ></textarea>
     <p class="char-count" id="char-count">0 / 500</p>
+
+    <!-- Quality mode selector (A) -->
+    <div class="quality-row">
+      <label for="quality-select">Quality</label>
+      <select id="quality-select">
+        <option value="">Fast (single draw)</option>
+        <option value="duration_filter">Balanced (filters truncated draws)</option>
+        <option value="best_of_n">Best quality (ASR-reranked, slower)</option>
+      </select>
+    </div>
 
     <button type="submit" id="synth-btn">🎙️ Synthesize</button>
   </form>
@@ -254,7 +66,26 @@
     <audio id="player" controls></audio>
     <a id="download-link" class="download-link" download="output.wav" href="#">⬇ Download WAV</a>
   </div>
+
+  <!-- Debug info accordion (C) -->
+  <details id="debug-section">
+    <summary>Debug info</summary>
+    <dl class="debug-body">
+      <dt>Phonemes</dt>
+      <dd><code id="debug-phonemes">—</code></dd>
+      <dt>Latency</dt>
+      <dd id="debug-latency">—</dd>
+      <dt>Quality mode</dt>
+      <dd id="debug-quality-mode">—</dd>
+    </dl>
+  </details>
 </div>
+
+<!-- Generation history (D) -->
+<section id="history-section" class="card" style="margin-top: 1.5rem;">
+  <h2>Recent generations</h2>
+  <div class="history-list" id="history-list"></div>
+</section>
 
 <footer>
   <p>
@@ -267,92 +98,6 @@
   </p>
 </footer>
 
-<script>
-  "use strict";
-
-  const form       = document.getElementById("synth-form");
-  const textarea   = document.getElementById("text-input");
-  const charCount  = document.getElementById("char-count");
-  const btn        = document.getElementById("synth-btn");
-  const status     = document.getElementById("status");
-  const audioSec   = document.getElementById("audio-section");
-  const player     = document.getElementById("player");
-  const dlLink     = document.getElementById("download-link");
-
-  const MAX_CHARS = 500;
-
-  /* ── Character counter ─────────────────────────────────────── */
-  textarea.addEventListener("input", () => {
-    const n = textarea.value.length;
-    charCount.textContent = `${n} / ${MAX_CHARS}`;
-    charCount.classList.toggle("over", n > MAX_CHARS);
-  });
-
-  /* ── Form submit ───────────────────────────────────────────── */
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-
-    const text = textarea.value.trim();
-    if (!text) {
-      setStatus("請輸入文字 / Please enter some text.", true);
-      return;
-    }
-    if (text.length > MAX_CHARS) {
-      setStatus(`Text too long (max ${MAX_CHARS} characters).`, true);
-      return;
-    }
-
-    setStatus('<span class="spinner"></span>Synthesizing…', false, true);
-    btn.disabled = true;
-    audioSec.style.display = "none";
-
-    // Revoke any previous object URL to avoid memory leaks
-    if (player.src && player.src.startsWith("blob:")) {
-      URL.revokeObjectURL(player.src);
-    }
-
-    try {
-      const resp = await fetch("/synthesize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!resp.ok) {
-        let detail = `Server error ${resp.status}`;
-        try {
-          const j = await resp.json();
-          if (j.detail) detail = j.detail;
-        } catch (_) { /* ignore parse error */ }
-        throw new Error(detail);
-      }
-
-      const blob = await resp.blob();
-      const url  = URL.createObjectURL(blob);
-
-      player.src  = url;
-      dlLink.href = url;
-      audioSec.style.display = "block";
-      player.play().catch(() => { /* autoplay may be blocked — that's fine */ });
-
-      setStatus("✅ Done! Use the player below to listen.", false);
-    } catch (err) {
-      setStatus(`❌ ${err.message}`, true);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  /* ── Helpers ───────────────────────────────────────────────── */
-  function setStatus(html, isError = false, isHtml = false) {
-    status.className = isError ? "error" : "";
-    if (isHtml) {
-      status.innerHTML = html;
-    } else {
-      status.textContent = html;
-    }
-  }
-</script>
-
+<script src="/static/playground.js" defer></script>
 </body>
 </html>

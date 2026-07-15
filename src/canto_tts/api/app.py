@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 
@@ -65,6 +68,9 @@ app = FastAPI(
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
+_STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
 
 # ---------------------------------------------------------------------------
 # Request / response schemas
@@ -72,6 +78,10 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 class SynthesizeRequest(BaseModel):
     text: str
+    quality: str | None = None
+    max_attempts: int = 3
+    best_of_n: int = 4
+    asr_backend: str = "whisper"
 
     @field_validator("text")
     @classmethod
@@ -81,6 +91,20 @@ class SynthesizeRequest(BaseModel):
             raise ValueError("text must not be empty")
         if len(v) > 500:
             raise ValueError("text must be ≤ 500 characters for the demo")
+        return v
+
+    @field_validator("quality")
+    @classmethod
+    def quality_must_be_valid(cls, v: str | None) -> str | None:
+        if v not in (None, "duration_filter", "best_of_n"):
+            raise ValueError("quality must be one of None, 'duration_filter', 'best_of_n'")
+        return v
+
+    @field_validator("asr_backend")
+    @classmethod
+    def asr_backend_must_be_valid(cls, v: str) -> str:
+        if v not in ("whisper", "sensevoice"):
+            raise ValueError("asr_backend must be one of 'whisper', 'sensevoice'")
         return v
 
 
@@ -110,8 +134,16 @@ async def synthesize(body: SynthesizeRequest, request: Request):
     tmp_path = tmp.name
     tmp.close()
 
+    t_start = time.perf_counter()
     try:
-        tts.synthesize(body.text, tmp_path)
+        tts.synthesize(
+            body.text,
+            tmp_path,
+            quality=body.quality,
+            max_attempts=body.max_attempts,
+            best_of_n=body.best_of_n,
+            asr_backend=body.asr_backend,
+        )
     except Exception as exc:
         # Clean up the temp file on error
         try:
@@ -119,6 +151,7 @@ async def synthesize(body: SynthesizeRequest, request: Request):
         except OSError:
             pass
         raise HTTPException(status_code=500, detail=f"Synthesis failed: {exc}") from exc
+    elapsed_ms = str(round((time.perf_counter() - t_start) * 1000))
 
     if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
         try:
@@ -127,11 +160,22 @@ async def synthesize(body: SynthesizeRequest, request: Request):
             pass
         raise HTTPException(status_code=500, detail="Synthesis produced no output.")
 
+    phonemes = tts.to_phoneme(body.text)
+
     return FileResponse(
         path=tmp_path,
         media_type="audio/wav",
         filename="output.wav",
         background=_delete_file_background(tmp_path),
+        headers={
+            # Percent-encoded: phoneme output can carry the source text's
+            # full-width punctuation (e.g. ，。), which isn't latin-1-safe
+            # and HTTP headers require latin-1. The frontend decodes with
+            # decodeURIComponent().
+            "X-Canto-Phonemes": quote(phonemes),
+            "X-Canto-Latency-Ms": elapsed_ms,
+            "X-Canto-Quality-Mode": body.quality if body.quality is not None else "none",
+        },
     )
 
 
