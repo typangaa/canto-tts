@@ -11,10 +11,10 @@ Runs on CPU via ONNX Runtime — no GPU required.
 Fine-tuned from [MOSS-TTS-Nano](https://github.com/OpenMOSS/MOSS-TTS)
 (0.1 B params, GPT-2 backbone, Apache-2.0, by OpenMOSS).
 
-> **⚠️ Experimental beta** — ~26.7% CER on held-out validation (N=3).
-> Not suitable for production use.
-> Single default voice only — no voice cloning, no voice selection.
-> **Weights not published yet** — checkpoint quality is still in active iteration;
+> **Weights published** — CER 11.82% / tone accuracy 84.22% / code-switch CER 13.87%
+> on a 100-sentence gate set (N=5 repeat eval).
+> Single default voice only — no voice cloning, no voice selection (yet).
+> **PyPI package not published yet** — install from source for now;
 > see the [GitHub repo](https://github.com/typangaa/canto-tts) for current status.
 
 ---
@@ -30,7 +30,7 @@ git clone https://github.com/typangaa/canto-tts.git && cd canto-tts && pip insta
 ```python
 from canto_tts import CantoTTS
 
-tts = CantoTTS(checkpoint="/path/to/your/exported/onnx_weights")  # weights not published yet
+tts = CantoTTS()  # auto-downloads typangaa/canto-tts-nano from HuggingFace on first use
 tts.synthesize("多謝晒，今日天氣幾好。", "hello.wav")
 print("Saved to hello.wav")
 
@@ -38,8 +38,7 @@ print("Saved to hello.wav")
 tts.synthesize("我哋一齊去 IFC food court 食飯。", "codeswitching.wav")
 ```
 
-Once weights are published to HuggingFace, `CantoTTS()` with no arguments will
-auto-download and cache them via the Hub (`~/.cache/huggingface/hub/`).
+Weights auto-download from HuggingFace and cache via the Hub (`~/.cache/huggingface/hub/`).
 
 ## Quality Modes (opt-in)
 
@@ -56,16 +55,16 @@ tts.synthesize(text, "out.wav", quality="best_of_n", best_of_n=4)            # n
 
 | | |
 |--|--|
-| **Quality** | ⚠️ ~26.7% CER on held-out validation (N=3). Experimental beta. |
-| **Voice** | Single default voice. No voice cloning, no voice selection. |
+| **Quality** | CER 11.82% / tone accuracy 84.22% / code-switch CER 13.87% (N=5 repeat, 100-sentence gate set). |
+| **Voice** | Single default voice. No voice cloning, no voice selection (yet). |
 | **Language** | Cantonese (Hong Kong) + English code-switching only. No Mandarin. |
 | **Training data** | Privately sourced — not released (copyright), regardless of weight status. |
-| **Weights** | ⚠️ Not published yet — source-code preview only. |
+| **Weights** | ✅ Published — [huggingface.co/typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano). |
 
 ## Model & License
 
 - **Base model**: [MOSS-TTS-Nano](https://github.com/OpenMOSS/MOSS-TTS) by OpenMOSS
-- **Weights**: not published yet — planned at [huggingface.co/typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano)
+- **Weights**: published at [huggingface.co/typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano)
 - **License**: Apache-2.0 (inherited from MOSS-TTS-Nano)
 
 ## Full Documentation

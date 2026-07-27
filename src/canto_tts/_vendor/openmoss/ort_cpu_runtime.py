@@ -351,9 +351,16 @@ class OrtCpuRuntime:
 
     @staticmethod
     def _resolve_manifest_path(model_dir: Path) -> Path:
+        # NOTE: deliberately do NOT call .resolve() on (model_dir / relative_path) here.
+        # HuggingFace Hub's cache layout stores snapshot files as symlinks into a flat
+        # blobs/ directory; resolving a per-file symlink follows it into blobs/, which
+        # then makes `.parent` (used as manifest_dir below) the flat blobs/ dir instead
+        # of the snapshot dir — breaking every subsequent relative path lookup. Joining
+        # without resolving keeps us inside the (possibly symlinked) snapshot tree;
+        # .is_file()/.exists()/open() all follow symlinks transparently on read.
         tried_paths: list[Path] = []
         for relative_path in MANIFEST_CANDIDATE_RELATIVE_PATHS:
-            candidate = (model_dir / relative_path).resolve()
+            candidate = model_dir / relative_path
             tried_paths.append(candidate)
             if candidate.is_file():
                 return candidate
@@ -362,7 +369,7 @@ class OrtCpuRuntime:
 
     def resolve_manifest_relative_path(self, relative_path: str | Path) -> Path:
         relative = Path(relative_path)
-        resolved = (self.manifest_dir / relative).resolve()
+        resolved = self.manifest_dir / relative
         if resolved.exists():
             return resolved
         relative_text = str(relative).replace("\\", "/")
@@ -371,7 +378,7 @@ class OrtCpuRuntime:
             if legacy_fragment not in f"/{relative_text}/":
                 continue
             rewritten_text = relative_text.replace(legacy_name, canonical_name)
-            rewritten = (self.manifest_dir / Path(rewritten_text)).resolve()
+            rewritten = self.manifest_dir / Path(rewritten_text)
             if rewritten.exists():
                 return rewritten
         return resolved

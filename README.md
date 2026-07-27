@@ -10,14 +10,14 @@
 
 ---
 
-## ⚠️ 狀態 / Status
+## ✅ 狀態 / Status
 
-> **🚧 Source-only preview — weights + PyPI package not published yet.**
-> 呢個 repo 而家淨係公開緊 SDK 源碼(ONNX/torch backend、CLI、demo、Docker),**未上 PyPI,亦都未上 HuggingFace 放 weights**——checkpoint quality 仲喺迭代緊(現時 CER ~26.7%,未達生產門檻),等質素穩定咗先會正式發佈 weights + 上 PyPI。
-> 想試嘅話,可以用 `scripts/export_onnx.py` 自己 export 一份 checkpoint(見 [Install](#install)),或者留意呢個 repo 嘅 release 動態。
+> **Weights published on HuggingFace** — [`typangaa/canto-tts-nano`](https://huggingface.co/typangaa/canto-tts-nano).
+> `canto-tts-nano-v1` 已經通過晒全部 quality gate(CER 11.82% / tone accuracy 84.22% / code-switch CER
+> 13.87%,N=5 repeat eval),`CantoTTS()` 而家可以零參數自動下載呢個 checkpoint。**PyPI package 未發佈**——
+> 而家請用 [Install](#install) 嘅 source install。
 >
-> **Experimental beta** — quality is still in active iteration.
-> Current CER on held-out validation set: **~26.7%** (N=3 repeat eval). Not suitable for production use yet.
+> Quality gate 數字全表見 [Limitations](#limitations--已知限制) / [Model & License](#model--license)。
 
 See the [Limitations](#limitations--已知限制) section for full details.
 
@@ -40,7 +40,7 @@ Key facts:
 - **English code-switching**: English words inside a Cantonese sentence are kept as orthography and pronounced naturally.
 - **CPU-first**: default backend is ONNX Runtime; PyTorch is optional.
 - **Single default voice**: unconditional generation — no voice cloning, no voice selection.
-- **Weights**: will auto-download from [typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano) once published (⚠️ **not published yet** — see [Status](#-狀態--status) above; for now you need your own local export, see below).
+- **Weights**: auto-downloads from [typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano) on first use (cached under `~/.cache/huggingface`) — see [Status](#-狀態--status) above.
 - **Training data**: privately sourced (not released for copyright reasons) — only the model weights will be public (once quality gates are met).
 
 ---
@@ -71,14 +71,10 @@ Optional extras:
 
 ## Quickstart (Python SDK)
 
-⚠️ Weights aren't published yet (see [Status](#-狀態--status)), so `CantoTTS()` with no arguments
-will fail on the auto-download step for now. Point it at your own locally-exported ONNX
-bundle (see [`scripts/export_onnx.py`](scripts/export_onnx.py)) via `checkpoint=`:
-
 ```python
 from canto_tts import CantoTTS
 
-tts = CantoTTS(checkpoint="/path/to/your/exported/onnx_weights")  # local dir from scripts/export_onnx.py
+tts = CantoTTS()  # auto-downloads typangaa/canto-tts-nano from HuggingFace on first use
 tts.synthesize("多謝晒，今日天氣幾好。", "hello.wav")
 print("Saved to hello.wav")
 
@@ -86,7 +82,12 @@ print("Saved to hello.wav")
 tts.synthesize("我哋一齊去 IFC food court 食飯。", "codeswitching.wav")
 ```
 
-Once weights are published, `CantoTTS()` with no arguments will auto-download them.
+To point at your own locally-exported ONNX bundle instead (e.g. a checkpoint you fine-tuned
+yourself via [`scripts/export_onnx.py`](scripts/export_onnx.py)), pass `checkpoint=`:
+
+```python
+tts = CantoTTS(checkpoint="/path/to/your/exported/onnx_weights")
+```
 
 See [`examples/quickstart.py`](examples/quickstart.py) for the full annotated version.
 
@@ -95,14 +96,12 @@ See [`examples/quickstart.py`](examples/quickstart.py) for the full annotated ve
 ## CLI
 
 ```bash
-# ⚠️ weights not published yet — point at your own local export for now:
-canto-tts synthesize "多謝晒，今日天氣幾好。" -o hello.wav --checkpoint /path/to/onnx_weights
+canto-tts synthesize "多謝晒，今日天氣幾好。" -o hello.wav   # auto-downloads weights on first use
 
-# Specify backend explicitly
+# Point at your own local export instead
 canto-tts synthesize "..." -o out.wav --backend onnx --checkpoint /path/to/onnx_weights
 ```
 
-Once weights are published, `--checkpoint` becomes optional (defaults to the official repo).
 Run `canto-tts --help` for all commands.
 
 ---
@@ -138,7 +137,7 @@ See [`canto_tts/quality.py`](src/canto_tts/quality.py)'s module docstring for th
 
 ```bash
 pip install -e ".[demo]"
-CANTO_TTS_CHECKPOINT=/path/to/onnx_weights canto-tts-demo   # weights not published yet, see Status
+canto-tts-demo   # auto-downloads weights on first use; set CANTO_TTS_CHECKPOINT to override
 # → open http://localhost:8000
 ```
 
@@ -150,8 +149,8 @@ No API key required — designed for local / self-hosted use.
 ## Docker
 
 ```bash
-# edit docker/docker-compose.yml to bind-mount your local export dir and set
-# CANTO_TTS_CHECKPOINT (weights not published yet, see Status above)
+# weights auto-download on first use; only edit docker/docker-compose.yml if you
+# want to bind-mount your own local export and set CANTO_TTS_CHECKPOINT instead
 docker compose -f docker/docker-compose.yml up
 # → open http://localhost:8000
 ```
@@ -164,11 +163,11 @@ See [`docs/DEPLOY.md`](docs/DEPLOY.md) for full self-hosting instructions.
 
 | Item | Detail |
 |------|--------|
-| **Quality** | ⚠️ ~26.7% CER on held-out validation (N=3). Experimental beta — not production quality. |
-| **Voice** | Single default voice only. No voice cloning, no voice selection, no multi-speaker. |
-| **Language** | Cantonese (Hong Kong) + English code-switching only. **No Mandarin support.** |
+| **Quality** | CER 11.82% / tone accuracy 84.22% / code-switch CER 13.87% on a 100-sentence gate set (N=5 repeat eval, Qwen3-ASR judge). Pure-English CER 9.7%. Voice-clone (zero-shot) CER 10.2%. |
+| **Voice** | Single baked default voice in the published ONNX bundle. No runtime voice selection or cloning via the ONNX backend; the underlying checkpoint supports zero-shot voice cloning (see the torch backend / `--ref-audio`), a multi-voice picker for the ONNX path is planned. |
+| **Language** | Cantonese (Hong Kong) + English code-switching only. **No Mandarin support** (intentionally not preserved). |
 | **Training data** | Privately sourced — not released (copyright), regardless of weight-release status. |
-| **Weights** | ⚠️ Not published yet (source-code preview only) — see [Status](#-狀態--status). |
+| **Weights** | ✅ Published — [huggingface.co/typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano). |
 | **Input** | Converts Hanzi → jyutping internally via `canto_hk_g2p`. Homophones are disambiguated by the G2P model; errors are possible. |
 | **Audio** | 48 000 Hz stereo WAV output (native codec rate — see `MOSS-Audio-Tokenizer-Nano`). |
 
@@ -180,7 +179,7 @@ See [`docs/DEPLOY.md`](docs/DEPLOY.md) for full self-hosting instructions.
 |--|--|
 | **Base model** | [MOSS-TTS-Nano](https://github.com/OpenMOSS/MOSS-TTS) by OpenMOSS — 0.1 B params, GPT-2 backbone |
 | **Fine-tune** | Hong Kong Cantonese, privately sourced training data |
-| **Weights** | ⚠️ Not published yet — planned at [huggingface.co/typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano) once quality gates are met |
+| **Weights** | ✅ Published at [huggingface.co/typangaa/canto-tts-nano](https://huggingface.co/typangaa/canto-tts-nano) |
 | **License** | [Apache-2.0](LICENSE) (inherited from MOSS-TTS-Nano) |
 | **GitHub** | [github.com/typangaa/canto-tts](https://github.com/typangaa/canto-tts) |
 
