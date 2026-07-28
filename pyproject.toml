@@ -89,3 +89,17 @@ dev = [
 # ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
 packages = ["src/canto_tts"]
+
+# hatchling's default sdist file selection only respects the ROOT .gitignore,
+# not nested ones — without this allowlist it sweeps in desktop/ (node_modules/,
+# Rust target/, the ~2.9GB PyInstaller sidecar binary) and .agents/ (internal
+# scratch), ballooning the sdist to multiple GB. Explicit allowlist instead of
+# trying to exclude every current/future large dir.
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/README.md",
+  "/README_PYPI.md",
+  "/LICENSE",
+]
