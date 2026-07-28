@@ -7,7 +7,12 @@ export type EngineState = "connecting" | "connected" | "disconnected";
 
 const FAST_POLL_INTERVAL_MS = 1000;
 const NORMAL_POLL_INTERVAL_MS = 4000;
-const MAX_RETRIES = 60; // 4 min of retry polling
+// Unhealthy polls retry at FAST_POLL_INTERVAL_MS (1s), so this is ~10 min before giving up.
+// Needs to comfortably outlast a first-run model weight download over a slow connection —
+// the listen port isn't even bound until that download + model load finishes (see
+// desktop/src-tauri/src/lib.rs spawn_sidecar), so every poll fails until then regardless of
+// download progress.
+const MAX_RETRIES = 600;
 
 export function useEngine(engineUrl: string) {
   const [state, setState] = useState<EngineState>("connecting");
@@ -17,6 +22,7 @@ export function useEngine(engineUrl: string) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
   const scheduleNextRef = useRef<(() => void) | null>(null);
+  const isPollingRef = useRef(false);
 
   const poll = useCallback(async (): Promise<boolean> => {
     setIsRetrying(true);
@@ -49,15 +55,20 @@ export function useEngine(engineUrl: string) {
     setState("connecting");
 
     const scheduleNext = async () => {
-      if (!active) return;
+      if (!active || isPollingRef.current) return;
 
-      const isHealthy = await poll();
-      if (!active) return;
+      isPollingRef.current = true;
+      try {
+        const isHealthy = await poll();
+        if (!active) return;
 
-      // 1000ms fast polling when starting, connecting, or unhealthy/disconnected.
-      // 4000ms background checks when healthy and connected.
-      const delay = isHealthy ? NORMAL_POLL_INTERVAL_MS : FAST_POLL_INTERVAL_MS;
-      timerRef.current = setTimeout(scheduleNext, delay);
+        // 1000ms fast polling when starting, connecting, or unhealthy/disconnected.
+        // 4000ms background checks when healthy and connected.
+        const delay = isHealthy ? NORMAL_POLL_INTERVAL_MS : FAST_POLL_INTERVAL_MS;
+        timerRef.current = setTimeout(scheduleNext, delay);
+      } finally {
+        isPollingRef.current = false;
+      }
     };
 
     scheduleNextRef.current = scheduleNext;
@@ -66,6 +77,7 @@ export function useEngine(engineUrl: string) {
     return () => {
       active = false;
       isMountedRef.current = false;
+      isPollingRef.current = false;
       scheduleNextRef.current = null;
       if (timerRef.current) {
         clearTimeout(timerRef.current);
@@ -75,6 +87,7 @@ export function useEngine(engineUrl: string) {
   }, [engineUrl, poll]);
 
   const retry = useCallback(() => {
+    if (isPollingRef.current) return;
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;

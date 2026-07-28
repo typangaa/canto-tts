@@ -101,8 +101,11 @@ export async function launchEngineServer(port: number = 8000): Promise<string> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     return await invoke<string>("start_python_engine", { port });
-  } catch (err) {
-    console.warn("Tauri invoke not available in standard browser context:", err);
-    throw new Error("請於 Terminal 執行: .venv/bin/python3 -m canto_tts.api.app");
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("Tauri invoke not available") || msg.includes("window.__TAURI__")) {
+      throw new Error("網頁預覽環境中無 Tauri IPC 通訊，請於 Terminal 執行: .venv/bin/python3 -m canto_tts.api.app");
+    }
+    throw new Error(msg);
   }
 }

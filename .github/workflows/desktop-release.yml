@@ -43,8 +43,14 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || (matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '') }}
+
+      - name: Add Rust target for macOS ARM64
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Add Rust target for macOS x86_64
+        if: matrix.platform == 'macos-13'
+        run: rustup target add x86_64-apple-darwin
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'

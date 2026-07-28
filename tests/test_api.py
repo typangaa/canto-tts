@@ -126,3 +126,14 @@ def test_cors_allow_headers_configured(client):
     )
     assert cors_mw.kwargs["allow_headers"] == ["Content-Type", "X-Canto-Auth-Token"]
 
+
+def test_synthesize_phonemization_failure_cleans_up_temp_file(client):
+    """When to_phoneme raises an exception, the temp file on disk must be cleaned up."""
+    from canto_tts.api.app import app
+
+    with patch.object(app.state.tts, "to_phoneme", side_effect=RuntimeError("Phonemizer crash")):
+        resp = client.post("/synthesize", json={"text": "你好"})
+        assert resp.status_code == 500
+        assert "Phonemization failed" in resp.json()["detail"]
+
+

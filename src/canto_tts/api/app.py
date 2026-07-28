@@ -189,11 +189,11 @@ async def synthesize(body: SynthesizeRequest, request: Request):
     tmp_path = tmp.name
     tmp.close()
 
-    t_start = time.perf_counter()
     try:
         synth_lock = getattr(request.app.state, "synth_lock", None)
         if synth_lock is not None:
             async with synth_lock:
+                t_start = time.perf_counter()
                 tts.synthesize(
                     body.text,
                     tmp_path,
@@ -203,6 +203,7 @@ async def synthesize(body: SynthesizeRequest, request: Request):
                     asr_backend=body.asr_backend,
                 )
         else:
+            t_start = time.perf_counter()
             tts.synthesize(
                 body.text,
                 tmp_path,
@@ -227,7 +228,15 @@ async def synthesize(body: SynthesizeRequest, request: Request):
             pass
         raise HTTPException(status_code=500, detail="Synthesis produced no output.")
 
-    phonemes = tts.to_phoneme(body.text)
+    try:
+        phonemes = tts.to_phoneme(body.text)
+        header_phonemes = quote(phonemes)
+    except Exception as exc:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"Phonemization failed: {exc}") from exc
 
     return FileResponse(
         path=tmp_path,
@@ -239,7 +248,7 @@ async def synthesize(body: SynthesizeRequest, request: Request):
             # full-width punctuation (e.g. ，。), which isn't latin-1-safe
             # and HTTP headers require latin-1. The frontend decodes with
             # decodeURIComponent().
-            "X-Canto-Phonemes": quote(phonemes),
+            "X-Canto-Phonemes": header_phonemes,
             "X-Canto-Latency-Ms": elapsed_ms,
             "X-Canto-Quality-Mode": body.quality if body.quality is not None else "none",
         },
