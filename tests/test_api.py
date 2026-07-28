@@ -137,3 +137,27 @@ def test_synthesize_phonemization_failure_cleans_up_temp_file(client):
         assert "Phonemization failed" in resp.json()["detail"]
 
 
+def test_model_version_reports_update_available(client):
+    """/model-version compares the loaded revision against HF Hub metadata, no download."""
+    with patch("canto_tts.hub.HfApi") as mock_api_cls:
+        mock_api_cls.return_value.model_info.return_value.sha = "newsha123"
+        resp = client.get("/model-version")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["latest_revision"] == "newsha123"
+    # _FakeBackend has no _model_dir, so current_revision is None -> never "available".
+    assert body["update_available"] is False
+
+
+def test_model_version_never_raises_on_network_failure(client):
+    """A failed Hub metadata lookup must degrade to update_available=False, not a 500."""
+    with patch("canto_tts.hub.HfApi", side_effect=RuntimeError("offline")):
+        resp = client.get("/model-version")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["update_available"] is False
+    assert "error" in body
+
+

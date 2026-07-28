@@ -41,6 +41,19 @@ export async function checkHealth(engineUrl = DEFAULT_ENGINE_URL): Promise<Healt
   return await res.json();
 }
 
+export interface ModelVersionStatus {
+  current_revision: string | null;
+  latest_revision: string | null;
+  update_available: boolean;
+  error?: string;
+}
+
+export async function checkModelVersion(engineUrl = DEFAULT_ENGINE_URL): Promise<ModelVersionStatus> {
+  const res = await fetch(`${engineUrl}/model-version`);
+  if (!res.ok) throw new Error(`Model version check failed: ${res.status}`);
+  return await res.json();
+}
+
 export async function phonemize(
   text: string,
   engineUrl = DEFAULT_ENGINE_URL,
@@ -95,6 +108,21 @@ export async function synthesize(
   const qualityMode = res.headers.get("X-Canto-Quality-Mode") || "none";
 
   return { audioBlob, phonemes, latencyMs, qualityMode };
+}
+
+export async function getHfToken(): Promise<string> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<string>("get_hf_token");
+  } catch {
+    // Not running inside Tauri (e.g. web preview) — no token storage available.
+    return "";
+  }
+}
+
+export async function setHfToken(token: string): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_hf_token", { token });
 }
 
 export async function launchEngineServer(port: number = 8000): Promise<string> {

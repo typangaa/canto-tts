@@ -17,12 +17,54 @@ fn is_port_in_use(port: u16) -> bool {
     std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
 
+/// Path to the locally-persisted HuggingFace access token (optional). Storing it lets a user
+/// authenticate model-weight downloads with their own free HF account instead of hitting HF
+/// Hub's anonymous-request rate limit, which is what causes first-run downloads to queue for a
+/// long time on a shared/anonymous quota.
+fn hf_token_file(app_handle: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Failed to resolve app config dir: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create app config dir: {}", e))?;
+    Ok(dir.join("hf_token"))
+}
+
+fn read_hf_token(app_handle: &AppHandle) -> Option<String> {
+    let path = hf_token_file(app_handle).ok()?;
+    let token = std::fs::read_to_string(path).ok()?;
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
+#[tauri::command]
+fn set_hf_token(app_handle: AppHandle, token: String) -> Result<(), String> {
+    let path = hf_token_file(&app_handle)?;
+    let token = token.trim();
+    if token.is_empty() {
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("Failed to clear token: {}", e))?;
+        }
+        return Ok(());
+    }
+    std::fs::write(&path, token).map_err(|e| format!("Failed to save token: {}", e))
+}
+
+#[tauri::command]
+fn get_hf_token(app_handle: AppHandle) -> Result<String, String> {
+    Ok(read_hf_token(&app_handle).unwrap_or_default())
+}
+
 /// Locate Python executable and spawn canto_tts.api.app server across Linux, macOS, and Windows.
 ///
 /// Dev-convenience only: packaged/release builds never call this (see `cfg!(debug_assertions)`
 /// gates in `start_python_engine` / `setup()`) — a shipped app has no `.venv` to find and this
 /// would always fail, so release builds go straight to the bundled sidecar.
-fn try_start_python_engine(port: u16, state: &EngineProcess) -> Result<String, String> {
+fn try_start_python_engine(app_handle: Option<&AppHandle>, port: u16, state: &EngineProcess) -> Result<String, String> {
     if is_port_in_use(port) {
         return Ok(format!("Engine server is already running on port {}", port));
     }
@@ -69,6 +111,10 @@ fn try_start_python_engine(port: u16, state: &EngineProcess) -> Result<String, S
        .arg("canto_tts.api.app")
        .arg("--port")
        .arg(port.to_string());
+
+    if let Some(token) = app_handle.and_then(read_hf_token) {
+        cmd.env("HF_TOKEN", token);
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -117,13 +163,17 @@ fn spawn_sidecar(app_handle: &AppHandle, state: &EngineProcess, port: u16) -> Re
         }
     }
 
-    let sidecar = app_handle
+    let mut sidecar = app_handle
         .shell()
         .sidecar("canto-tts-sidecar")
-        .map_err(|e| format!("Failed to resolve bundled sidecar binary: {}", e))?;
+        .map_err(|e| format!("Failed to resolve bundled sidecar binary: {}", e))?
+        .env("CANTO_TTS_PORT", port.to_string());
+
+    if let Some(token) = read_hf_token(app_handle) {
+        sidecar = sidecar.env("HF_TOKEN", token);
+    }
 
     let (mut rx, child) = sidecar
-        .env("CANTO_TTS_PORT", port.to_string())
         .spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
 
@@ -171,7 +221,7 @@ fn start_python_engine(app_handle: AppHandle, state: tauri::State<'_, EngineProc
     // Dev-convenience only: in a packaged/release build there is no `.venv` to find, so skip
     // straight to the bundled sidecar rather than probing for one and failing every time.
     if cfg!(debug_assertions) {
-        if let Ok(msg) = try_start_python_engine(listen_port, &state) {
+        if let Ok(msg) = try_start_python_engine(Some(&app_handle), listen_port, &state) {
             return Ok(msg);
         }
     }
@@ -188,6 +238,8 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let default_port = 8000;
             let state = app.state::<EngineProcess>();
@@ -195,7 +247,7 @@ pub fn run() {
 
             // 1. Dev-only: try local `.venv` Python environment first.
             if cfg!(debug_assertions) {
-                if let Err(err) = try_start_python_engine(default_port, &state) {
+                if let Err(err) = try_start_python_engine(Some(&app_handle), default_port, &state) {
                     eprintln!("Warning: Auto-start python engine notice: {}", err);
                 }
             }
@@ -217,7 +269,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_python_engine])
+        .invoke_handler(tauri::generate_handler![start_python_engine, set_hf_token, get_hf_token])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
@@ -277,12 +329,12 @@ mod tests {
         };
         // Test spawning/replacing python process on an unused port
         let unused_port = portpicker::pick_unused_port().unwrap_or(18960);
-        let res1 = try_start_python_engine(unused_port, &state);
+        let res1 = try_start_python_engine(None, unused_port, &state);
         // It should attempt execution using system python
         if res1.is_ok() {
             // Call again on another port to test killing and replacing previous child process
             let unused_port2 = portpicker::pick_unused_port().unwrap_or(18961);
-            let res2 = try_start_python_engine(unused_port2, &state);
+            let res2 = try_start_python_engine(None, unused_port2, &state);
             assert!(res2.is_ok());
             // Clean up state
             if let Ok(mut lock) = state.python_child.lock() {

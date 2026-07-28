@@ -1,9 +1,9 @@
 // src/components/SettingsTab.tsx — Engine Settings & Status Component
 
-import React, { useState } from "react";
-import { Settings, RefreshCw, CheckCircle2, AlertCircle, RotateCcw, Play } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Settings, RefreshCw, CheckCircle2, AlertCircle, RotateCcw, Play, KeyRound, ExternalLink } from "lucide-react";
 import type { HealthStatus } from "../api";
-import { DEFAULT_ENGINE_URL, launchEngineServer } from "../api";
+import { DEFAULT_ENGINE_URL, launchEngineServer, getHfToken, setHfToken } from "../api";
 import type { EngineState } from "../hooks/useEngine";
 
 interface SettingsTabProps {
@@ -23,6 +23,40 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 }) => {
   const [isSpinningUp, setIsSpinningUp] = useState<boolean>(false);
   const [spinError, setSpinError] = useState<string | null>(null);
+  const [hfToken, setHfTokenState] = useState<string>("");
+  const [hfTokenSaved, setHfTokenSaved] = useState<string | null>(null);
+  const [hfTokenSaving, setHfTokenSaving] = useState<boolean>(false);
+
+  useEffect(() => {
+    getHfToken().then(setHfTokenState);
+  }, []);
+
+  const handleOpenHfTokenPage = async () => {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl("https://huggingface.co/settings/tokens");
+    } catch {
+      // Web preview / no opener plugin available — user can copy the URL manually.
+    }
+  };
+
+  const handleSaveHfToken = async () => {
+    setHfTokenSaving(true);
+    setHfTokenSaved(null);
+    try {
+      await setHfToken(hfToken);
+      setHfTokenSaved(
+        hfToken.trim()
+          ? "已儲存。下次啟動 Engine 時生效 — 如引擎已在運行，請重新啟動。"
+          : "已清除已儲存嘅 token。"
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setHfTokenSaved(`儲存失敗：${msg}`);
+    } finally {
+      setHfTokenSaving(false);
+    }
+  };
 
   const handleStartEngine = async () => {
     setIsSpinningUp(true);
@@ -115,6 +149,44 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <div>
                 <b>未偵測到本地引擎連線</b> — 按上方「啟動 Python Engine」按鈕開啟背景服務
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* HuggingFace Hub Access Token */}
+        <div className="setting-item" style={{ marginTop: 16 }}>
+          <label className="setting-label">
+            <KeyRound size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />
+            HuggingFace 個人 Access Token（選填，加快模型權重下載）：
+          </label>
+          <div className="input-with-button">
+            <input
+              type="password"
+              value={hfToken}
+              onChange={(e) => setHfTokenState(e.target.value)}
+              placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              className="text-input"
+            />
+            <button
+              className="synthesize-btn"
+              style={{ padding: "8px 16px", fontSize: "0.82rem", marginLeft: 0 }}
+              onClick={handleSaveHfToken}
+              disabled={hfTokenSaving}
+            >
+              {hfTokenSaving ? <RefreshCw size={14} className="spin-icon" /> : <CheckCircle2 size={14} />}
+              {hfTokenSaving ? "儲存中..." : "儲存"}
+            </button>
+            <button className="sample-btn" onClick={handleOpenHfTokenPage} title="開啟 huggingface.co/settings/tokens">
+              <ExternalLink size={14} /> 免費申請 Token
+            </button>
+          </div>
+          <small style={{ opacity: 0.75, fontSize: "0.78rem", marginTop: 4, display: "block" }}>
+            首次啟動需下載約 730MB 模型權重。HuggingFace Hub 對「匿名（未登入）」請求有速度限制，經常需要排隊等候；
+            填上免費 HF 帳戶嘅 Read token 之後，下載會用返你自己嘅配額，通常快好多。此設定純粹存喺你本機，唔會上傳去第三方。
+          </small>
+          {hfTokenSaved && (
+            <div className="status-item success" style={{ marginTop: 8 }}>
+              <CheckCircle2 size={16} /> <span>{hfTokenSaved}</span>
             </div>
           )}
         </div>

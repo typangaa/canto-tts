@@ -25,7 +25,7 @@ takes an explicit local `checkpoint`/`codec_path` from the caller and has no
 
 from __future__ import annotations
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, snapshot_download
 
 # NOTE: This is the *public* HuggingFace repo that ships the pre-trained ONNX
 # weights for canto-tts-nano. Never reference any private training-repo path
@@ -52,6 +52,39 @@ def resolve_onnx_model_dir(
     -------
     str
         Absolute path to the locally-cached snapshot directory, suitable to
-        pass directly as ``OnnxBackend(model_dir=...)``.
+        pass directly as ``OnnxBackend(model_dir=...)``. The directory's own
+        name *is* the resolved commit revision (HF Hub's cache layout is
+        ``snapshots/<commit_sha>/``) -- callers that need to track "which
+        revision is currently loaded" can just take ``Path(result).name``
+        rather than re-resolving it separately.
     """
     return snapshot_download(repo_id=repo_id, revision=revision)
+
+
+def check_for_model_update(
+    repo_id: str = DEFAULT_HF_REPO,
+    current_revision: str | None = None,
+) -> dict:
+    """Cheap, metadata-only check for a newer model revision on the Hub.
+
+    Calls ``HfApi().model_info()`` -- a single small API request -- never
+    ``snapshot_download()``, so this is safe to call on every app launch
+    without triggering a re-download. Never raises: network/API failures are
+    reported back as ``update_available: False`` with an ``error`` field so
+    callers can treat this as best-effort and keep using whatever is already
+    cached locally.
+    """
+    try:
+        latest_revision = HfApi().model_info(repo_id).sha
+    except Exception as exc:  # noqa: BLE001 - best-effort, never fatal
+        return {
+            "current_revision": current_revision,
+            "latest_revision": None,
+            "update_available": False,
+            "error": str(exc),
+        }
+    return {
+        "current_revision": current_revision,
+        "latest_revision": latest_revision,
+        "update_available": bool(current_revision) and current_revision != latest_revision,
+    }

@@ -50,6 +50,10 @@ async def lifespan(app: FastAPI):
     checkpoint = os.environ.get("CANTO_TTS_CHECKPOINT")
     app.state.tts = CantoTTS(checkpoint=checkpoint)
     app.state.synth_lock = asyncio.Lock()
+    # HF Hub's cache layout is `snapshots/<commit_sha>/` -- the resolved model
+    # dir's own basename IS the loaded revision, no separate lookup needed.
+    model_dir = getattr(getattr(app.state.tts, "_backend", None), "_model_dir", None)
+    app.state.model_revision = Path(model_dir).name if model_dir else None
     yield
     # Nothing to clean up for the ONNX backend, but hook is here for future use.
 
@@ -154,6 +158,19 @@ async def health(request: Request):
         "model_loaded": model_loaded,
         "model_dir": model_dir,
     }
+
+
+@app.get("/model-version")
+async def model_version(request: Request):
+    """Cheap check for a newer model-weight revision on HuggingFace Hub.
+
+    Metadata-only (no download) -- safe for the desktop UI to call once per
+    launch to decide whether to show a "new model weights available" notice.
+    """
+    from canto_tts.hub import DEFAULT_HF_REPO, check_for_model_update
+
+    current_revision = getattr(request.app.state, "model_revision", None)
+    return check_for_model_update(repo_id=DEFAULT_HF_REPO, current_revision=current_revision)
 
 
 class PhonemeRequest(BaseModel):
