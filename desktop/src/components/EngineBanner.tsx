@@ -19,8 +19,13 @@ export const EngineBanner: React.FC<EngineBannerProps> = ({
   const [copied, setCopied] = useState(false);
   const [isSpinningUp, setIsSpinningUp] = useState(false);
   const [launchResult, setLaunchResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [engineLog, setEngineLog] = useState<string | null>(null);
+  // Accumulated (not overwritten) — a single "latest line" silently discards whatever crash
+  // traceback or download progress printed right before it, which is exactly what made this
+  // hard to diagnose. Capped so a crash-looping process can't grow this unboundedly.
+  const [engineLogs, setEngineLogs] = useState<string[]>([]);
   const unlistenRef = useRef<(() => void) | null>(null);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+  const MAX_LOG_LINES = 300;
 
   // Sidecar stdout/stderr (incl. HuggingFace Hub's first-run download progress) is forwarded
   // from Rust via the "engine-log" event. Not available outside a Tauri window (e.g. web
@@ -31,7 +36,10 @@ export const EngineBanner: React.FC<EngineBannerProps> = ({
       try {
         const { listen } = await import("@tauri-apps/api/event");
         const unlisten = await listen<string>("engine-log", (event) => {
-          setEngineLog(event.payload);
+          setEngineLogs((prev) => {
+            const next = [...prev, event.payload];
+            return next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
+          });
         });
         if (cancelled) {
           unlisten();
@@ -50,6 +58,12 @@ export const EngineBanner: React.FC<EngineBannerProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ block: "nearest" });
+  }, [engineLogs]);
+
+  const engineCrashed = engineLogs.some((line) => line.includes("sidecar terminated"));
 
   const startupCmd = useMemo(() => {
     if (typeof window !== "undefined" && window.navigator) {
@@ -75,7 +89,7 @@ export const EngineBanner: React.FC<EngineBannerProps> = ({
   const handleStartEngine = async () => {
     setIsSpinningUp(true);
     setLaunchResult(null);
-    setEngineLog(null);
+    setEngineLogs([]);
     try {
       const msg = await launchEngineServer(8000);
       setLaunchResult({
@@ -134,26 +148,54 @@ export const EngineBanner: React.FC<EngineBannerProps> = ({
           <div className="banner-title-row">
             {engineState === "connecting" ? (
               <>
-                <RefreshCw size={18} className="spin-icon banner-icon" />
+                {engineCrashed ? (
+                  <AlertCircle size={18} className="banner-icon danger" />
+                ) : (
+                  <RefreshCw size={18} className="spin-icon banner-icon" />
+                )}
                 <span>
-                  <b>正在與本地 TTS 引擎通訊中...</b> ({engineUrl})
-                  <br />
-                  <small style={{ opacity: 0.85, fontSize: "0.8rem", marginTop: 2, display: "block" }}>
-                    ℹ️ 若為首次執行，系統將自動從 HuggingFace (typangaa/canto-tts-nano) 下載模型權重，請稍候。
-                  </small>
-                  {engineLog && (
-                    <code
+                  {engineCrashed ? (
+                    <b>本地引擎程序已終止 — 請撳下面「啟動 Engine」再試一次</b>
+                  ) : (
+                    <>
+                      <b>正在與本地 TTS 引擎通訊中...</b> ({engineUrl})
+                      <br />
+                      <small style={{ opacity: 0.85, fontSize: "0.8rem", marginTop: 2, display: "block" }}>
+                        ℹ️ 若為首次執行，系統將自動從 HuggingFace (typangaa/canto-tts-nano) 下載模型權重，請稍候。
+                      </small>
+                    </>
+                  )}
+                  {engineLogs.length > 0 && (
+                    <pre
                       style={{
                         display: "block",
                         marginTop: 4,
+                        maxHeight: 140,
+                        overflowY: "auto",
                         fontSize: "0.75rem",
-                        opacity: 0.75,
+                        opacity: 0.8,
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-all",
+                        background: "rgba(0, 0, 0, 0.2)",
+                        borderRadius: 6,
+                        padding: "6px 8px",
+                        margin: 0,
                       }}
                     >
-                      {engineLog}
-                    </code>
+                      {engineLogs.map((line, i) => (
+                        <div
+                          key={i}
+                          style={
+                            line.includes("sidecar terminated") || line.includes("[error]")
+                              ? { color: "#f87171" }
+                              : undefined
+                          }
+                        >
+                          {line}
+                        </div>
+                      ))}
+                      <div ref={logEndRef} />
+                    </pre>
                   )}
                 </span>
               </>
