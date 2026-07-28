@@ -25,27 +25,9 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-  publish-to-testpypi:
-    name: Publish to TestPyPI
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/canto-tts
-    permissions:
-      id-token: write  # required for OIDC trusted publishing
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
   publish-to-pypi:
     name: Publish to PyPI
-    needs: publish-to-testpypi
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
