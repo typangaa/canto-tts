@@ -15,16 +15,20 @@ and a note on the public hosted demo.
 ### Requirements
 
 - Python ≥ 3.9
-- Internet access on first run (to download model weights from HuggingFace, ~400 MB) — once published
+- Internet access on first run (to download model weights from HuggingFace, ~400 MB)
 - No GPU required
 
 ### Install
 
 ```bash
-git clone https://github.com/typangaa/canto-tts.git && cd canto-tts && pip install -e .
+pip install canto-tts
 ```
 
-(Not on PyPI yet — once published, this will be `pip install canto-tts`.)
+Installing from source instead (for development, or to track `main`):
+
+```bash
+git clone https://github.com/typangaa/canto-tts.git && cd canto-tts && pip install -e .
+```
 
 ### Synthesise from the command line
 

@@ -11,18 +11,17 @@ Runs on CPU via ONNX Runtime — no GPU required.
 Fine-tuned from [MOSS-TTS-Nano](https://github.com/OpenMOSS/MOSS-TTS)
 (0.1 B params, GPT-2 backbone, Apache-2.0, by OpenMOSS).
 
-> **Weights published** — CER 11.82% / tone accuracy 84.22% / code-switch CER 13.87%
-> on a 100-sentence gate set (N=5 repeat eval).
+> **Published** — CER 11.82% / tone accuracy 84.22% / code-switch CER 13.87%
+> on a 100-sentence gate set (N=5 repeat eval). Weights on
+> [HuggingFace](https://huggingface.co/typangaa/canto-tts-nano).
 > Single default voice only — no voice cloning, no voice selection (yet).
-> **PyPI package not published yet** — install from source for now;
-> see the [GitHub repo](https://github.com/typangaa/canto-tts) for current status.
 
 ---
 
 ## Install
 
 ```bash
-git clone https://github.com/typangaa/canto-tts.git && cd canto-tts && pip install -e .
+pip install canto-tts
 ```
 
 ## Quickstart

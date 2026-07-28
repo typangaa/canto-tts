@@ -14,16 +14,20 @@
 ### 系統要求
 
 - Python ≥ 3.9
-- 第一次運行需要互聯網連線（從 HuggingFace 下載模型 weights，約 400 MB）—— 呢個要等公開咗先得
+- 第一次運行需要互聯網連線（從 HuggingFace 下載模型 weights，約 400 MB）
 - **唔需要** GPU（純 CPU 運行）
 
 ### 安裝
 
 ```bash
-git clone https://github.com/typangaa/canto-tts.git && cd canto-tts && pip install -e .
+pip install canto-tts
 ```
 
-（未上 PyPI——公開之後會係 `pip install canto-tts`。）
+由 source 裝（開發用，或者想跟 `main` 分支）：
+
+```bash
+git clone https://github.com/typangaa/canto-tts.git && cd canto-tts && pip install -e .
+```
 
 ### 用 CLI 合成語音
 
