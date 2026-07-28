@@ -69,9 +69,22 @@ def get_backend(
 
         model_dir = checkpoint
         if model_dir is None:
-            from canto_tts.hub import resolve_onnx_model_dir
+            from pathlib import Path
 
-            model_dir = resolve_onnx_model_dir()
+            factory_file = Path(__file__).resolve()
+            candidates = [
+                factory_file.parents[3] / "onnx_weights" if len(factory_file.parents) > 3 else Path("onnx_weights").resolve(),
+                Path("onnx_weights").resolve(),
+            ]
+
+            for candidate in candidates:
+                if candidate.is_dir() and (candidate / "browser_poc_manifest.json").is_file():
+                    model_dir = str(candidate.resolve())
+                    break
+            else:
+                from canto_tts.hub import resolve_onnx_model_dir
+
+                model_dir = resolve_onnx_model_dir()
         return OnnxBackend(model_dir, **kwargs)
 
     if backend_name == "torch":

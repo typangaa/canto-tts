@@ -17,6 +17,7 @@ Or directly:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import time
@@ -25,6 +26,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -47,6 +49,7 @@ async def lifespan(app: FastAPI):
                                      # even if canto_tts core isn't fully installed yet
     checkpoint = os.environ.get("CANTO_TTS_CHECKPOINT")
     app.state.tts = CantoTTS(checkpoint=checkpoint)
+    app.state.synth_lock = asyncio.Lock()
     yield
     # Nothing to clean up for the ONNX backend, but hook is here for future use.
 
@@ -65,10 +68,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ---------------------------------------------------------------------------
+# CORS & Auth Middleware
+# ---------------------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Dynamic origins allowed for localhost IPC
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Canto-Auth-Token"],
+    expose_headers=["X-Canto-Phonemes", "X-Canto-Latency-Ms", "X-Canto-Quality-Mode"],
+)
+
+
+@app.middleware("http")
+async def verify_auth_token(request: Request, call_next):
+    """Verify X-Canto-Auth-Token header if CANTO_TTS_SECRET_TOKEN is set in environment."""
+    secret = os.environ.get("CANTO_TTS_SECRET_TOKEN")
+    if secret and request.url.path not in ("/health", "/", "/docs", "/openapi.json"):
+        token = request.headers.get("X-Canto-Auth-Token")
+        if not token or token != secret:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized: invalid or missing X-Canto-Auth-Token"})
+    return await call_next(request)
+
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 _STATIC_DIR = Path(__file__).parent / "static"
+_STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
@@ -112,6 +141,32 @@ class SynthesizeRequest(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.get("/health")
+async def health(request: Request):
+    """Health check endpoint for sidecar and desktop UI status monitoring."""
+    tts = getattr(request.app.state, "tts", None)
+    model_loaded = tts is not None and getattr(tts, "_backend", None) is not None
+    model_dir = str(getattr(tts._backend, "_model_dir", "")) if model_loaded else None
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "backend": "onnx",
+        "model_loaded": model_loaded,
+        "model_dir": model_dir,
+    }
+
+
+class PhonemeRequest(BaseModel):
+    text: str
+
+
+@app.post("/phonemize")
+async def phonemize(body: PhonemeRequest, request: Request):
+    """Convert text to space-separated Jyutping phonemes."""
+    tts = request.app.state.tts
+    return {"text": body.text, "phonemes": tts.to_phoneme(body.text)}
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def index(request: Request) -> HTMLResponse:
     """Serve the single-page demo UI."""
@@ -136,14 +191,26 @@ async def synthesize(body: SynthesizeRequest, request: Request):
 
     t_start = time.perf_counter()
     try:
-        tts.synthesize(
-            body.text,
-            tmp_path,
-            quality=body.quality,
-            max_attempts=body.max_attempts,
-            best_of_n=body.best_of_n,
-            asr_backend=body.asr_backend,
-        )
+        synth_lock = getattr(request.app.state, "synth_lock", None)
+        if synth_lock is not None:
+            async with synth_lock:
+                tts.synthesize(
+                    body.text,
+                    tmp_path,
+                    quality=body.quality,
+                    max_attempts=body.max_attempts,
+                    best_of_n=body.best_of_n,
+                    asr_backend=body.asr_backend,
+                )
+        else:
+            tts.synthesize(
+                body.text,
+                tmp_path,
+                quality=body.quality,
+                max_attempts=body.max_attempts,
+                best_of_n=body.best_of_n,
+                asr_backend=body.asr_backend,
+            )
     except Exception as exc:
         # Clean up the temp file on error
         try:
@@ -200,17 +267,27 @@ def _delete_file_background(path: str) -> BackgroundTask:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Start the demo server. Called by the `canto-tts-demo` console script.
+    """Start the demo server / sidecar process.
 
-    CANTO_TTS_PORT (optional): override the listen port (default 8000).
+    Supports CLI flags:
+        --port <port>           Listen port (default: 8000 or CANTO_TTS_PORT)
+        --secret-token <token>  Secret token required in X-Canto-Auth-Token header
     """
+    import argparse
     import uvicorn
 
-    port = int(os.environ.get("CANTO_TTS_PORT", "8000"))
+    parser = argparse.ArgumentParser(description="CantoTTS Engine API Server & Sidecar")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("CANTO_TTS_PORT", "8000")), help="Listen port")
+    parser.add_argument("--secret-token", type=str, default=os.environ.get("CANTO_TTS_SECRET_TOKEN"), help="Secret auth token")
+    args, _ = parser.parse_known_args()
+
+    if args.secret_token:
+        os.environ["CANTO_TTS_SECRET_TOKEN"] = args.secret_token
+
     uvicorn.run(
-        "canto_tts.api.app:app",
-        host="0.0.0.0",
-        port=port,
+        app,
+        host="127.0.0.1",
+        port=args.port,
         reload=False,
     )
 

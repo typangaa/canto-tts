@@ -59,11 +59,14 @@ _VENDOR_DIR = Path(__file__).resolve().parent.parent / "_vendor" / "openmoss"
 
 
 def _ort_cpu_runtime_module():
-    if str(_VENDOR_DIR) not in sys.path:
-        sys.path.insert(0, str(_VENDOR_DIR))
-    import ort_cpu_runtime  # noqa: PLC0415
-
-    return ort_cpu_runtime
+    try:
+        from canto_tts._vendor.openmoss import ort_cpu_runtime
+        return ort_cpu_runtime
+    except ImportError:
+        if str(_VENDOR_DIR) not in sys.path:
+            sys.path.insert(0, str(_VENDOR_DIR))
+        import ort_cpu_runtime  # noqa: PLC0415
+        return ort_cpu_runtime
 
 
 class _PhonemeEncoder:

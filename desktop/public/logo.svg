@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="cantoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe" />
+      <stop offset="100%" stop-color="#4facfe" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0f172a" />
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="none" stroke="url(#cantoGradient)" stroke-width="1.5" stroke-opacity="0.3" />
+  <g fill="url(#cantoGradient)">
+    <rect x="14" y="26" width="4" height="12" rx="2" />
+    <rect x="22" y="18" width="4" height="28" rx="2" />
+    <rect x="30" y="12" width="4" height="40" rx="2" />
+    <rect x="38" y="22" width="4" height="20" rx="2" />
+    <rect x="46" y="28" width="4" height="8" rx="2" />
+  </g>
+</svg>

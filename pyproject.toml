@@ -70,8 +70,9 @@ quality-sensevoice = [
 all = ["canto-tts[torch,demo,quality,quality-sensevoice]"]
 
 [project.scripts]
-"canto-tts"      = "canto_tts.cli:main"
-"canto-tts-demo" = "canto_tts.api.app:main"
+"canto-tts"         = "canto_tts.cli:main"
+"canto-tts-demo"    = "canto_tts.api.app:main"
+"canto-tts-desktop" = "canto_tts.api.app:main"
 
 # ---------------------------------------------------------------------------
 # uv-specific dev dependency group (not pip-installable).

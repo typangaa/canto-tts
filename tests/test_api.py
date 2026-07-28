@@ -6,6 +6,7 @@ before the TestClient context starts, so no HuggingFace download is attempted.
 """
 from __future__ import annotations
 
+import asyncio
 import wave
 from unittest.mock import patch
 from urllib.parse import unquote
@@ -106,3 +107,22 @@ def test_synthesize_phonemes_header_is_percent_encoded(client):
     resp = client.post("/synthesize", json={"text": "你好，世界。"})
     assert resp.status_code == 200
     assert unquote(resp.headers["x-canto-phonemes"]) == "aa1 bb2 ， cc3"
+
+
+def test_synth_lock_instantiation_in_lifespan(client):
+    """Verify app.state.synth_lock is instantiated as an asyncio.Lock on startup."""
+    from canto_tts.api.app import app
+
+    assert hasattr(app.state, "synth_lock")
+    assert isinstance(app.state.synth_lock, asyncio.Lock)
+
+
+def test_cors_allow_headers_configured(client):
+    """Verify CORSMiddleware configuration specifies tightened allow_headers."""
+    from canto_tts.api.app import app
+
+    cors_mw = next(
+        mw for mw in app.user_middleware if mw.cls.__name__ == "CORSMiddleware"
+    )
+    assert cors_mw.kwargs["allow_headers"] == ["Content-Type", "X-Canto-Auth-Token"]
+
