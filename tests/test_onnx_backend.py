@@ -71,6 +71,46 @@ def test_synthesize_produces_nonempty_wav(tts_onnx, tmp_path):
     assert os.path.getsize(str(out)) > 0, f"Output file at {out} is empty"
 
 
+def test_onnx_backend_voice_cloning_with_ref_audio(tts_onnx, tmp_path):
+    """
+    Verify OnnxBackend.synthesize with a reference audio file produces a non-empty WAV file.
+    """
+    import wave
+
+    ref_wav = tmp_path / "ref_test.wav"
+    with wave.open(str(ref_wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 16000)  # 1.0s audio
+
+    out = tmp_path / "test_clone_output.wav"
+    tts_onnx.synthesize("你好。", str(out), ref_audio=str(ref_wav))
+
+    assert out.exists(), f"Expected output file at {out} — file not created"
+    assert os.path.getsize(str(out)) > 0, f"Output file at {out} is empty"
+
+
+def test_onnx_backend_voice_cloning_multichannel_audio(tts_onnx, tmp_path):
+    """
+    Verify 6-channel (5.1 surround sound) audio is correctly converted to stereo without crashing ONNX.
+    """
+    import wave
+
+    ref_wav = tmp_path / "ref_multichannel.wav"
+    with wave.open(str(ref_wav), "wb") as w:
+        w.setnchannels(6)  # 5.1 surround sound
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x00" * (6 * 24000))  # 1.0s audio
+
+    out = tmp_path / "test_multichannel_output.wav"
+    tts_onnx.synthesize("多謝。", str(out), ref_audio=str(ref_wav))
+
+    assert out.exists()
+    assert os.path.getsize(str(out)) > 0
+
+
 # ---------------------------------------------------------------------------
 # Test 2: lightweight phoneme tokenisation — no weights needed
 # ---------------------------------------------------------------------------

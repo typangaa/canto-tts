@@ -161,3 +161,22 @@ def test_model_version_never_raises_on_network_failure(client):
     assert "error" in body
 
 
+def test_synthesize_clone_basic_returns_200_with_audio(client):
+    """POST /synthesize-clone with text and reference WAV file returns 200."""
+    import io
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 1600)
+    buf.seek(0)
+
+    files = {"ref_audio": ("ref.wav", buf.getvalue(), "audio/wav")}
+    data = {"text": "你好"}
+    resp = client.post("/synthesize-clone", data=data, files=files)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("audio/")
+    assert "x-canto-phonemes" in resp.headers
+
+

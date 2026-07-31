@@ -6,6 +6,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+#[cfg(target_os = "linux")]
+use webkit2gtk::{PermissionRequestExt, SettingsExt, WebViewExt};
+
 /// Managed state for the Python engine child process and sidecar process
 pub struct EngineProcess {
     pub python_child: Mutex<Option<Child>>,
@@ -241,6 +244,22 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // Enable WebKitGTK media stream and handle permission requests on Linux
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|webview| {
+                    let webview_ptr = webview.inner();
+                    if let Some(settings) = webview_ptr.settings() {
+                        settings.set_enable_media_stream(true);
+                        settings.set_enable_webrtc(true);
+                    }
+                    webview_ptr.connect_permission_request(|_webview, req| {
+                        req.allow();
+                        true
+                    });
+                });
+            }
+
             let default_port = 8000;
             let state = app.state::<EngineProcess>();
             let app_handle = app.handle().clone();

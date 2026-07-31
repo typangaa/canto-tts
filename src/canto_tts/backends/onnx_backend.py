@@ -9,15 +9,11 @@ vendored rather than reimplemented).
 Three ways this deviates from OpenMOSS's own ONNX driver (`onnx_tts_runtime.py`,
 NOT vendored — see that decision in the vendor README):
 
-  1. Single baked default voice, no runtime voice cloning. OpenMOSS's ONNX
-     runtime always requires `prompt_audio_codes` (from a user-supplied
-     reference clip or a built-in preset); canto-tts bakes exactly ONE
-     default-voice's prompt_audio_codes into the manifest at export time
-     (scripts/export_onnx.py) and always uses it — no `ref_audio` parameter
-     here (unlike backends/torch_backend.py, which does support one, since
-     the torch path is a dev/internal tool, not the public default). This
-     also means the shipped runtime never needs the codec "encode" ONNX
-     session at inference time, only "decode"/"decode_step".
+  1. Baked default voice with opt-in runtime voice cloning. canto-tts bakes
+     ONE default-voice's prompt_audio_codes into the manifest at export time
+     (scripts/export_onnx.py). If no `ref_audio` parameter is passed, the baked
+     default voice is used. If `ref_audio` is provided, `encode_reference_audio()`
+     encodes the reference clip on-the-fly via `codec_encode` ONNX session.
   2. No WeTextProcessing, no text-normalization pipeline at all. Matches the
      rest of this project (see backends/torch_backend.py's module docstring,
      deviation #1) — our `text` is already a fully-formed phoneme string by
@@ -127,12 +123,111 @@ class OnnxBackend(TTSBackend):
         self._runtime = ort_cpu_runtime.OrtCpuRuntime(model_dir=self._model_dir, thread_count=thread_count)
         self._encoder = _PhonemeEncoder(self._model_dir)
         self._default_voice_codes = self._runtime.manifest["default_voice"]["prompt_audio_codes"]
+        # One-entry memo for encode_reference_audio — CantoTTS's quality= modes
+        # (duration_filter / best_of_n) call synthesize() N times with the SAME
+        # ref_audio, and re-encoding the clip each draw is pure waste (~200ms per
+        # call for a 4s clip). Keyed on identity+mtime+size so an edited-in-place
+        # path is never served stale.
+        self._ref_codes_cache: tuple[tuple[str, int, int], list[list[int]]] | None = None
+
+    def encode_reference_audio(self, audio_path: str | Path) -> list[list[int]]:
+        """Encode a reference audio clip into prompt_audio_codes using the ONNX codec encoder.
+
+        Resamples/re-channels the clip to whatever the codec meta declares
+        (48kHz stereo for the shipped MOSS-Audio-Tokenizer-Nano bundle).
+
+        This MUST stay behaviourally identical to scripts/export_onnx.py's
+        `encode_default_voice`, which bakes the default voice at export time —
+        verified bit-exact by re-encoding the default voice's own reference clip
+        and diffing against the baked manifest codes.
+        """
+        from math import gcd
+        import soundfile as sf
+        from scipy.signal import resample_poly
+
+        try:
+            stat = Path(audio_path).stat()
+            cache_key = (str(audio_path), stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            cache_key = None
+        if cache_key is not None and self._ref_codes_cache is not None:
+            cached_key, cached_codes = self._ref_codes_cache
+            if cached_key == cache_key:
+                return cached_codes
+
+        codec_meta = self._runtime.codec_meta["codec_config"]
+        target_sr = int(codec_meta["sample_rate"])
+        target_ch = int(codec_meta["channels"])
+        num_q = int(codec_meta["num_quantizers"])
+
+        waveform, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+        if sample_rate <= 0:
+            raise ValueError(f"Invalid reference audio sample rate: {sample_rate}")
+        waveform = waveform.T  # (channels, samples)
+
+        if waveform.shape[1] == 0:
+            raise ValueError("Reference audio file contains no sample frames.")
+
+        # Cap max audio duration at 30 seconds to prevent OOM
+        max_samples = sample_rate * 30
+        if waveform.shape[1] > max_samples:
+            waveform = waveform[:, :max_samples]
+
+        if sample_rate != target_sr:
+            divisor = gcd(target_sr, sample_rate)
+            waveform = resample_poly(waveform, target_sr // divisor, sample_rate // divisor, axis=1)
+
+        current_ch = waveform.shape[0]
+        if current_ch != target_ch:
+            if current_ch == 1:
+                waveform = np.repeat(waveform, target_ch, axis=0)
+            elif target_ch == 1:
+                # Average, don't truncate — dropping channels loses whatever
+                # signal is panned into them (matches export_onnx.py).
+                waveform = waveform.mean(axis=0, keepdims=True)
+            elif current_ch > target_ch:
+                # e.g. 5.1 -> stereo: fold the extra channels into the kept ones
+                # rather than discarding them outright.
+                kept = waveform[:target_ch, :].copy()
+                extra = waveform[target_ch:, :].mean(axis=0)
+                waveform = kept + extra / target_ch
+            else:
+                waveform = np.pad(waveform, ((0, target_ch - current_ch), (0, 0)))
+
+        wav_np = waveform[np.newaxis, :, :].astype(np.float32, copy=False)
+        session = self._runtime.sessions["codec_encode"]
+        outputs = session.run(
+            None,
+            {"waveform": wav_np, "input_lengths": np.asarray([wav_np.shape[-1]], dtype=np.int32)},
+        )
+        named = dict(zip([o.name for o in session.get_outputs()], outputs))
+        audio_codes = np.asarray(named["audio_codes"], dtype=np.int32)
+        code_len = int(np.asarray(named["audio_code_lengths"]).reshape(-1)[0])
+
+        if code_len <= 0:
+            # The codec downsamples by codec_config["downsample_rate"] (3840
+            # samples @48kHz = 80ms/frame), so a clip shorter than one frame
+            # encodes to ZERO prompt rows. That is not an error downstream —
+            # build_voice_clone_request_rows happily emits an empty audio
+            # prefix and the model just falls back to unconditional generation,
+            # silently ignoring the user's reference voice. Fail loudly instead.
+            min_seconds = int(codec_meta["downsample_rate"]) / target_sr
+            raise ValueError(
+                f"Reference audio is too short to encode ({waveform.shape[1] / target_sr:.3f}s); "
+                f"need at least {min_seconds:.2f}s. Use a 3-15s clip for usable voice cloning."
+            )
+
+        codes = [[int(audio_codes[0, f, q]) for q in range(num_q)] for f in range(code_len)]
+        if cache_key is not None:
+            self._ref_codes_cache = (cache_key, codes)
+        return codes
 
     def synthesize(
         self,
         text: str,
         out_path: str,
         *,
+        ref_audio: Optional[str] = None,
         control: Control = None,
         tokens: Optional[int] = None,
         max_new_frames: int = 375,
@@ -146,12 +241,11 @@ class OnnxBackend(TTSBackend):
         **_unused: Any,
     ) -> str:
         """Synthesize `text` (already phoneme-converted by the caller — see
-        TTSBackend.to_phoneme / CantoTTS.synthesize) to `out_path` using the
-        single baked default voice. `control`/`tokens` (L2 control) are
-        accepted for interface parity with torch_backend.py but this project
-        ships no fine-tuned control-conditioned behaviour differences between
-        backends beyond text conditioning; see canto_tts.core.prompting if
-        extending this.
+        TTSBackend.to_phoneme / CantoTTS.synthesize) to `out_path`.
+
+        If `ref_audio` path is provided, the reference clip will be encoded
+        on-the-fly for voice cloning / style transfer. Otherwise, the baked
+        default voice is used.
         """
         if control is not None or tokens is not None:
             # L2 control renders into the text-side suffix, not the baked
@@ -178,7 +272,12 @@ class OnnxBackend(TTSBackend):
             audio_repetition_penalty=float(audio_repetition_penalty),
         )
 
-        request_rows = self._runtime.build_voice_clone_request_rows(self._default_voice_codes, text_token_ids)
+        if ref_audio is not None:
+            prompt_codes = self.encode_reference_audio(ref_audio)
+        else:
+            prompt_codes = self._default_voice_codes
+
+        request_rows = self._runtime.build_voice_clone_request_rows(prompt_codes, text_token_ids)
         generated_frames = self._runtime.generate_audio_frames(request_rows)
         channel_arrays, audio_length = self._runtime.decode_full_audio(generated_frames)
         merged = (

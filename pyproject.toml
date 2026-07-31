@@ -19,6 +19,7 @@ dependencies = [
   "canto-hk-g2p",
   "huggingface_hub>=0.20",
   "numpy",
+  "scipy>=1.10.0",
   "soundfile",
   # Base-vocab tokenization for the ONNX backend's tokenizer-free text encoder
   # (backends/onnx_backend.py's _PhonemeEncoder) — added phoneme/pause tokens

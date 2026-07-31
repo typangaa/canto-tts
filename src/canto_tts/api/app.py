@@ -25,7 +25,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -268,6 +268,127 @@ async def synthesize(body: SynthesizeRequest, request: Request):
             "X-Canto-Phonemes": header_phonemes,
             "X-Canto-Latency-Ms": elapsed_ms,
             "X-Canto-Quality-Mode": body.quality if body.quality is not None else "none",
+        },
+    )
+
+
+@app.post("/synthesize-clone")
+async def synthesize_clone(
+    request: Request,
+    text: str = Form(...),
+    ref_audio: UploadFile = File(...),
+    quality: str | None = Form(None),
+    max_attempts: int = Form(3),
+    best_of_n: int = Form(4),
+    asr_backend: str = Form("whisper"),
+):
+    """
+    Synthesize speech with voice cloning from an uploaded reference audio clip.
+
+    Returns a WAV audio file.
+    """
+    tts = request.app.state.tts
+
+    text_clean = text.strip()
+    if not text_clean:
+        raise HTTPException(status_code=422, detail="text must not be empty")
+    if len(text_clean) > 500:
+        raise HTTPException(status_code=422, detail="text must be ≤ 500 characters for the demo")
+
+    if quality not in (None, "none", "duration_filter", "best_of_n"):
+        raise HTTPException(status_code=422, detail="quality must be one of None, 'duration_filter', 'best_of_n'")
+
+    if asr_backend not in ("whisper", "sensevoice"):
+        raise HTTPException(status_code=422, detail="asr_backend must be one of 'whisper', 'sensevoice'")
+
+    contents = await ref_audio.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Reference audio must be ≤ 10MB")
+
+    # Decoding is libsndfile (via soundfile), which handles WAV/FLAC/OGG/MP3 but
+    # NOT m4a/aac — advertising m4a here would only turn an unsupported upload
+    # into a confusing late failure inside the codec encoder.
+    ext = Path(ref_audio.filename or "ref.wav").suffix.lower()
+    if ext not in (".wav", ".mp3", ".flac", ".ogg"):
+        ext = ".wav"
+
+    ref_tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    ref_tmp_path = ref_tmp.name
+    try:
+        ref_tmp.write(contents)
+    finally:
+        ref_tmp.close()
+
+    out_tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    out_tmp_path = out_tmp.name
+    out_tmp.close()
+
+    try:
+        synth_lock = getattr(request.app.state, "synth_lock", None)
+        synth_kwargs = dict(
+            quality=quality if (quality and quality != "none") else None,
+            max_attempts=max_attempts,
+            best_of_n=best_of_n,
+            asr_backend=asr_backend,
+            ref_audio=ref_tmp_path,
+        )
+        if synth_lock is not None:
+            async with synth_lock:
+                t_start = time.perf_counter()
+                tts.synthesize(text_clean, out_tmp_path, **synth_kwargs)
+        else:
+            t_start = time.perf_counter()
+            tts.synthesize(text_clean, out_tmp_path, **synth_kwargs)
+    except (ValueError, RuntimeError) as exc:
+        # Bad/undecodable/too-short reference clip — the caller's input is at
+        # fault, so surface it as 422 rather than burying it in a generic 500.
+        # (soundfile.LibsndfileError subclasses RuntimeError, so a corrupt or
+        # unsupported container lands here too.)
+        try:
+            os.unlink(out_tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=422, detail=f"Unusable reference audio: {exc}") from exc
+    except Exception as exc:
+        try:
+            os.unlink(out_tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"Voice cloning synthesis failed: {exc}") from exc
+    finally:
+        try:
+            os.unlink(ref_tmp_path)
+        except OSError:
+            pass
+
+    elapsed_ms = str(round((time.perf_counter() - t_start) * 1000))
+
+    if not os.path.exists(out_tmp_path) or os.path.getsize(out_tmp_path) == 0:
+        try:
+            os.unlink(out_tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail="Synthesis produced no output.")
+
+    try:
+        phonemes = tts.to_phoneme(text_clean)
+        header_phonemes = quote(phonemes)
+    except Exception as exc:
+        try:
+            os.unlink(out_tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"Phonemization failed: {exc}") from exc
+
+    return FileResponse(
+        path=out_tmp_path,
+        media_type="audio/wav",
+        filename="output.wav",
+        background=_delete_file_background(out_tmp_path),
+        headers={
+            "X-Canto-Phonemes": header_phonemes,
+            "X-Canto-Latency-Ms": elapsed_ms,
+            "X-Canto-Quality-Mode": quality if (quality and quality != "none") else "none",
         },
     )
 

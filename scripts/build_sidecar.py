@@ -76,6 +76,7 @@ def build_sidecar() -> Path:
         "--hidden-import", "onnxruntime",
         "--hidden-import", "scipy",
         "--hidden-import", "scipy.special",
+        "--hidden-import", "scipy.signal",
         "--hidden-import", "soundfile",
         "--hidden-import", "fastapi",
         "--hidden-import", "uvicorn",

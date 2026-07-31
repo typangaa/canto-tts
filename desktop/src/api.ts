@@ -18,6 +18,15 @@ export interface SynthesizeParams {
   asr_backend: string;
 }
 
+export interface SynthesizeCloneParams {
+  text: string;
+  refAudioFile: File;
+  quality: string | null;
+  max_attempts: number;
+  best_of_n: number;
+  asr_backend: string;
+}
+
 export interface SynthesizeResult {
   audioBlob: Blob;
   phonemes: string;
@@ -85,6 +94,55 @@ export async function synthesize(
       best_of_n: params.best_of_n,
       asr_backend: params.asr_backend,
     }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `Server error ${res.status}` }));
+    throw new Error(err.detail || `Server returned ${res.status}`);
+  }
+
+  const audioBlob = await res.blob();
+
+  let phonemes = "";
+  const rawPhonemes = res.headers.get("X-Canto-Phonemes");
+  if (rawPhonemes) {
+    try {
+      phonemes = decodeURIComponent(rawPhonemes);
+    } catch {
+      phonemes = rawPhonemes;
+    }
+  }
+
+  const latencyMs = parseInt(res.headers.get("X-Canto-Latency-Ms") || "0", 10);
+  const qualityMode = res.headers.get("X-Canto-Quality-Mode") || "none";
+
+  return { audioBlob, phonemes, latencyMs, qualityMode };
+}
+
+export async function synthesizeWithClone(
+  params: SynthesizeCloneParams,
+  engineUrl = DEFAULT_ENGINE_URL,
+  authToken?: string
+): Promise<SynthesizeResult> {
+  const form = new FormData();
+  form.append("text", params.text);
+  form.append("ref_audio", params.refAudioFile, params.refAudioFile.name);
+  if (params.quality && params.quality !== "none") {
+    form.append("quality", params.quality);
+  }
+  form.append("max_attempts", String(params.max_attempts));
+  form.append("best_of_n", String(params.best_of_n));
+  form.append("asr_backend", params.asr_backend);
+
+  const headers: Record<string, string> = {};
+  if (authToken) {
+    headers["X-Canto-Auth-Token"] = authToken;
+  }
+
+  const res = await fetch(`${engineUrl}/synthesize-clone`, {
+    method: "POST",
+    headers,
+    body: form,
   });
 
   if (!res.ok) {
