@@ -125,6 +125,19 @@ class CantoTTS:
         str
             The resolved output path (same as *out_path* on success).
         """
+        if quality is not None and kwargs.get("sample_mode") == "greedy":
+            # A quality= mode's whole mechanism is "redraw and keep the best
+            # one" -- pointless (and just wasted compute) against a
+            # deterministic draw, since every redraw reproduces the exact
+            # same output. See OnnxBackend.synthesize's "greedy" docstring
+            # section for the measured runaway-generation risk this
+            # combination can't actually protect against.
+            raise ValueError(
+                "quality= modes redraw and keep the best candidate, which cannot help with "
+                "sample_mode='greedy' (deterministic — every redraw is byte-identical). "
+                "Use quality=None with sample_mode='greedy', or drop sample_mode='greedy' to "
+                "let quality= redraws actually vary."
+            )
         if quality is None:
             return self._backend.synthesize(text, out_path, **kwargs)
         if quality == "duration_filter":

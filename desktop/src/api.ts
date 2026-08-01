@@ -10,12 +10,19 @@ export interface HealthStatus {
   model_dir?: string | null;
 }
 
+// "fixed" (fastest, RTF ~0.4, but duration varies run to run — the engine's
+// own sample-length decision is randomized and not tunable in this mode),
+// "full" (~2.5-3x slower, but duration variance measured ~3.6x tighter),
+// "greedy" (fully deterministic — same text+voice always renders byte-identical).
+export type SampleMode = "fixed" | "full" | "greedy";
+
 export interface SynthesizeParams {
   text: string;
   quality: string | null;
   max_attempts: number;
   best_of_n: number;
   asr_backend: string;
+  sample_mode: SampleMode;
 }
 
 export interface SynthesizeCloneParams {
@@ -25,6 +32,7 @@ export interface SynthesizeCloneParams {
   max_attempts: number;
   best_of_n: number;
   asr_backend: string;
+  sample_mode: SampleMode;
 }
 
 export interface SynthesizeResult {
@@ -32,6 +40,7 @@ export interface SynthesizeResult {
   phonemes: string;
   latencyMs: number;
   qualityMode: string;
+  sampleMode: string;
 }
 
 function buildHeaders(authToken?: string): Record<string, string> {
@@ -93,6 +102,7 @@ export async function synthesize(
       max_attempts: params.max_attempts,
       best_of_n: params.best_of_n,
       asr_backend: params.asr_backend,
+      sample_mode: params.sample_mode,
     }),
   });
 
@@ -115,8 +125,9 @@ export async function synthesize(
 
   const latencyMs = parseInt(res.headers.get("X-Canto-Latency-Ms") || "0", 10);
   const qualityMode = res.headers.get("X-Canto-Quality-Mode") || "none";
+  const sampleMode = res.headers.get("X-Canto-Sample-Mode") || "fixed";
 
-  return { audioBlob, phonemes, latencyMs, qualityMode };
+  return { audioBlob, phonemes, latencyMs, qualityMode, sampleMode };
 }
 
 export async function synthesizeWithClone(
@@ -133,6 +144,7 @@ export async function synthesizeWithClone(
   form.append("max_attempts", String(params.max_attempts));
   form.append("best_of_n", String(params.best_of_n));
   form.append("asr_backend", params.asr_backend);
+  form.append("sample_mode", params.sample_mode);
 
   const headers: Record<string, string> = {};
   if (authToken) {
@@ -164,8 +176,9 @@ export async function synthesizeWithClone(
 
   const latencyMs = parseInt(res.headers.get("X-Canto-Latency-Ms") || "0", 10);
   const qualityMode = res.headers.get("X-Canto-Quality-Mode") || "none";
+  const sampleMode = res.headers.get("X-Canto-Sample-Mode") || "fixed";
 
-  return { audioBlob, phonemes, latencyMs, qualityMode };
+  return { audioBlob, phonemes, latencyMs, qualityMode, sampleMode };
 }
 
 export async function getHfToken(): Promise<string> {

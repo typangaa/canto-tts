@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Lifespan: load the TTS model once at startup, share via app.state
@@ -81,7 +81,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "X-Canto-Auth-Token"],
-    expose_headers=["X-Canto-Phonemes", "X-Canto-Latency-Ms", "X-Canto-Quality-Mode"],
+    expose_headers=["X-Canto-Phonemes", "X-Canto-Latency-Ms", "X-Canto-Quality-Mode", "X-Canto-Sample-Mode"],
 )
 
 
@@ -115,6 +115,12 @@ class SynthesizeRequest(BaseModel):
     max_attempts: int = 3
     best_of_n: int = 4
     asr_backend: str = "whisper"
+    # "fixed" (default) matches the ONNX backend's own default: fastest
+    # (RTF ~0.4) but ignores sample_mode's tuning knobs entirely -- see
+    # OnnxBackend.synthesize's docstring for the measured RTF/variance
+    # tradeoffs of "full" (tunable, ~2.5-3x slower) and "greedy"
+    # (byte-identical output every call).
+    sample_mode: str = "fixed"
 
     @field_validator("text")
     @classmethod
@@ -132,6 +138,23 @@ class SynthesizeRequest(BaseModel):
         if v not in (None, "duration_filter", "best_of_n"):
             raise ValueError("quality must be one of None, 'duration_filter', 'best_of_n'")
         return v
+
+    @field_validator("sample_mode")
+    @classmethod
+    def sample_mode_must_be_valid(cls, v: str) -> str:
+        if v not in ("fixed", "full", "greedy"):
+            raise ValueError("sample_mode must be one of 'fixed', 'full', 'greedy'")
+        return v
+
+    @model_validator(mode="after")
+    def quality_and_greedy_are_incompatible(self) -> "SynthesizeRequest":
+        # quality= redraws and keeps the best candidate -- pointless (every
+        # redraw is byte-identical) against sample_mode="greedy", which
+        # CantoTTS.synthesize() rejects outright. Catch it here for a clean
+        # 422 instead of that ValueError surfacing as a 500.
+        if self.quality is not None and self.sample_mode == "greedy":
+            raise ValueError("quality= cannot be combined with sample_mode='greedy' (redraws would be pointless)")
+        return self
 
     @field_validator("asr_backend")
     @classmethod
@@ -218,6 +241,7 @@ async def synthesize(body: SynthesizeRequest, request: Request):
                     max_attempts=body.max_attempts,
                     best_of_n=body.best_of_n,
                     asr_backend=body.asr_backend,
+                    sample_mode=body.sample_mode,
                 )
         else:
             t_start = time.perf_counter()
@@ -228,6 +252,7 @@ async def synthesize(body: SynthesizeRequest, request: Request):
                 max_attempts=body.max_attempts,
                 best_of_n=body.best_of_n,
                 asr_backend=body.asr_backend,
+                sample_mode=body.sample_mode,
             )
     except Exception as exc:
         # Clean up the temp file on error
@@ -268,6 +293,7 @@ async def synthesize(body: SynthesizeRequest, request: Request):
             "X-Canto-Phonemes": header_phonemes,
             "X-Canto-Latency-Ms": elapsed_ms,
             "X-Canto-Quality-Mode": body.quality if body.quality is not None else "none",
+            "X-Canto-Sample-Mode": body.sample_mode,
         },
     )
 
@@ -281,6 +307,7 @@ async def synthesize_clone(
     max_attempts: int = Form(3),
     best_of_n: int = Form(4),
     asr_backend: str = Form("whisper"),
+    sample_mode: str = Form("fixed"),
 ):
     """
     Synthesize speech with voice cloning from an uploaded reference audio clip.
@@ -300,6 +327,15 @@ async def synthesize_clone(
 
     if asr_backend not in ("whisper", "sensevoice"):
         raise HTTPException(status_code=422, detail="asr_backend must be one of 'whisper', 'sensevoice'")
+
+    if sample_mode not in ("fixed", "full", "greedy"):
+        raise HTTPException(status_code=422, detail="sample_mode must be one of 'fixed', 'full', 'greedy'")
+
+    if quality not in (None, "none") and sample_mode == "greedy":
+        raise HTTPException(
+            status_code=422,
+            detail="quality= cannot be combined with sample_mode='greedy' (redraws would be pointless)",
+        )
 
     contents = await ref_audio.read()
     if len(contents) > 10 * 1024 * 1024:
@@ -331,6 +367,7 @@ async def synthesize_clone(
             best_of_n=best_of_n,
             asr_backend=asr_backend,
             ref_audio=ref_tmp_path,
+            sample_mode=sample_mode,
         )
         if synth_lock is not None:
             async with synth_lock:
@@ -389,6 +426,7 @@ async def synthesize_clone(
             "X-Canto-Phonemes": header_phonemes,
             "X-Canto-Latency-Ms": elapsed_ms,
             "X-Canto-Quality-Mode": quality if (quality and quality != "none") else "none",
+            "X-Canto-Sample-Mode": sample_mode,
         },
     )
 

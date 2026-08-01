@@ -19,7 +19,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import JSZip from "jszip";
-import { synthesize, type SynthesizeParams } from "../api";
+import { synthesize, type SynthesizeParams, type SampleMode } from "../api";
 
 interface BatchTabProps {
   engineUrl: string;
@@ -43,13 +43,15 @@ export interface BatchConfig {
   maxAttempts: number;
   bestOfN: number;
   asrBackend: string;
+  sampleMode: SampleMode;
 }
 
 const DEFAULT_BATCH_CONFIG: BatchConfig = {
-  qualityMode: "none",
+  qualityMode: "duration_filter",
   maxAttempts: 3,
   bestOfN: 4,
   asrBackend: "whisper",
+  sampleMode: "fixed",
 };
 
 function getInitialBatchConfig(): BatchConfig {
@@ -98,6 +100,12 @@ function getInitialBatchConfig(): BatchConfig {
         : typeof studioConfig.asrBackend === "string"
         ? studioConfig.asrBackend
         : DEFAULT_BATCH_CONFIG.asrBackend,
+    sampleMode:
+      batchConfig.sampleMode === "fixed" || batchConfig.sampleMode === "full" || batchConfig.sampleMode === "greedy"
+        ? batchConfig.sampleMode
+        : studioConfig.sampleMode === "fixed" || studioConfig.sampleMode === "full" || studioConfig.sampleMode === "greedy"
+        ? studioConfig.sampleMode
+        : DEFAULT_BATCH_CONFIG.sampleMode,
   };
 }
 
@@ -213,6 +221,7 @@ export const BatchTab: React.FC<BatchTabProps> = ({ engineUrl }) => {
   const [maxAttempts, setMaxAttempts] = useState<number>(() => getInitialBatchConfig().maxAttempts);
   const [bestOfN, setBestOfN] = useState<number>(() => getInitialBatchConfig().bestOfN);
   const [asrBackend, setAsrBackend] = useState<string>(() => getInitialBatchConfig().asrBackend);
+  const [sampleMode, setSampleMode] = useState<SampleMode>(() => getInitialBatchConfig().sampleMode);
   const [isQualityCollapsed, setIsQualityCollapsed] = useState<boolean>(true);
 
   // Sync batch configuration updates to localStorage
@@ -222,9 +231,19 @@ export const BatchTab: React.FC<BatchTabProps> = ({ engineUrl }) => {
       maxAttempts,
       bestOfN,
       asrBackend,
+      sampleMode,
     };
     localStorage.setItem(STORAGE_KEY_BATCH_CONFIG, JSON.stringify(config));
-  }, [qualityMode, maxAttempts, bestOfN, asrBackend]);
+  }, [qualityMode, maxAttempts, bestOfN, asrBackend, sampleMode]);
+
+  // quality= redraws are pointless against a deterministic draw (every
+  // redraw reproduces the same output) — the backend rejects this
+  // combination outright, so keep the UI from ever sending it.
+  useEffect(() => {
+    if (sampleMode === "greedy" && qualityMode !== "none") {
+      setQualityMode("none");
+    }
+  }, [sampleMode, qualityMode]);
 
   const cancelRef = useRef<boolean>(false);
   const objectUrlsRef = useRef<Set<string>>(new Set());
@@ -294,6 +313,7 @@ export const BatchTab: React.FC<BatchTabProps> = ({ engineUrl }) => {
         max_attempts: maxAttempts,
         best_of_n: bestOfN,
         asr_backend: asrBackend,
+        sample_mode: sampleMode,
       };
 
       try {
@@ -317,7 +337,7 @@ export const BatchTab: React.FC<BatchTabProps> = ({ engineUrl }) => {
         };
       }
     },
-    [engineUrl, qualityMode, maxAttempts, bestOfN, asrBackend]
+    [engineUrl, qualityMode, maxAttempts, bestOfN, asrBackend, sampleMode]
   );
 
   // Single Item Manual Retry
@@ -596,14 +616,30 @@ export const BatchTab: React.FC<BatchTabProps> = ({ engineUrl }) => {
                 }}
               >
                 <div className="control-group">
+                  <label className="control-label" title="控制每次生成嘅隨機性同長度穩定度">
+                    穩定性：
+                  </label>
+                  <select
+                    value={sampleMode}
+                    onChange={(e) => setSampleMode(e.target.value as SampleMode)}
+                    className="select-input"
+                    title="Fixed＝最快，但每次生成長度會浮動；Full＝慢 2.5-3 倍，長度穩定好多（推薦）；Greedy＝完全一樣，但實測過罕見情況會卡喺長輸出，重試冇用（實驗性）"
+                  >
+                    <option value="fixed">Fixed（最快，長度會浮動）</option>
+                    <option value="full">Full（推薦：慢 2.5-3x，長度穩定好多）</option>
+                    <option value="greedy">Greedy（實驗性：可能卡住喺長輸出，冇法靠重試解決）</option>
+                  </select>
+                </div>
+
+                <div className="control-group">
                   <label className="control-label">Quality 模式：</label>
                   <select
                     value={qualityMode}
                     onChange={(e) => setQualityMode(e.target.value)}
                     className="select-input"
                   >
-                    <option value="none">預設 Single Draw (最快)</option>
-                    <option value="duration_filter">Duration Filter (防截斷/防循環)</option>
+                    <option value="none">Single Draw (最快，冇重試)</option>
+                    <option value="duration_filter">預設 Duration Filter (防截斷/防循環)</option>
                     <option value="best_of_n">Best-of-N (ASR 重新排序)</option>
                   </select>
                 </div>

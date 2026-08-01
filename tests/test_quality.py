@@ -180,3 +180,37 @@ def test_best_of_n_unknown_backend_raises(tmp_path):
 )
 def test_normalize_for_cer_strips_punctuation_and_whitespace(raw, expected):
     assert _normalize_for_cer(raw) == expected
+
+
+# ── CantoTTS.synthesize's quality + sample_mode="greedy" guard ────────────────
+# (redraws are pointless against a deterministic draw -- every redraw would
+# reproduce the exact same output; see OnnxBackend.synthesize's "greedy"
+# docstring section for the measured runaway-generation risk that combination
+# can't actually protect against)
+
+
+def _fake_canto_tts(backend):
+    """Bypass CantoTTS.__init__ (which downloads real weights via get_backend)
+    to unit-test the quality/sample_mode guard against a fake backend."""
+    import canto_tts
+
+    instance = canto_tts.CantoTTS.__new__(canto_tts.CantoTTS)
+    instance._backend = backend
+    return instance
+
+
+def test_synthesize_quality_with_greedy_sample_mode_raises(tmp_path):
+    tts = _fake_canto_tts(_FakeBackend(durations=[1.0]))
+    out_path = str(tmp_path / "out.wav")
+
+    with pytest.raises(ValueError, match="sample_mode='greedy'"):
+        tts.synthesize("你好", out_path, quality="duration_filter", sample_mode="greedy")
+
+
+def test_synthesize_greedy_sample_mode_without_quality_is_allowed(tmp_path):
+    tts = _fake_canto_tts(_FakeBackend(durations=[1.0]))
+    out_path = str(tmp_path / "out.wav")
+
+    result = tts.synthesize("你好", out_path, sample_mode="greedy")
+
+    assert result == out_path

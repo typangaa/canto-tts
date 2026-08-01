@@ -231,7 +231,8 @@ class OnnxBackend(TTSBackend):
         control: Control = None,
         tokens: Optional[int] = None,
         max_new_frames: int = 375,
-        text_temperature: float = 0.9,
+        sample_mode: str = "fixed",
+        text_temperature: float = 0.3,
         text_top_p: float = 1.0,
         text_top_k: int = 50,
         audio_temperature: float = 0.9,
@@ -246,6 +247,67 @@ class OnnxBackend(TTSBackend):
         If `ref_audio` path is provided, the reference clip will be encoded
         on-the-fly for voice cloning / style transfer. Otherwise, the baked
         default voice is used.
+
+        sample_mode selects which ONNX decode path drives generation — this
+        determines whether the temperature/top_p/top_k/repetition_penalty
+        kwargs below have ANY effect at all (measured on a 5-6 repeat, single
+        ~9s-expected-duration probe; see canto-tts-public session notes):
+
+          "fixed" (default): the shipped browser_poc export's fused per-frame
+          sampler (`local_fixed_sampled_frame`). Fastest (RTF ~0.4), but its
+          sampling hyperparameters are COMPILE-TIME CONSTANTS baked into the
+          ONNX graph at export time (FIXED_SAMPLED_* in
+          scripts/vendor/openmoss/export_moss_tts_browser_onnx.py) — every
+          *_temperature/*_top_p/*_top_k/audio_repetition_penalty kwarg below
+          is SILENTLY IGNORED in this mode. Only the stopping-time and
+          per-channel-token draws are randomized per call, which is why
+          duration varies run to run (measured stddev ~0.78s on a 5-repeat/
+          ~5.5s-mean sample) with no way to tune it from Python.
+
+          "full": the unfused per-channel sampling loop (`local_cached_step`)
+          where every kwarg below is genuinely honoured. ~2.5-3x slower
+          (RTF ~1.0-1.2 measured) — comparable to or slightly above realtime,
+          unlike "fixed"'s comfortable RTF ~0.4. The dominant lever for
+          run-to-run DURATION variance turns out to be `text_temperature`
+          (it gates the per-frame continue/stop decision, NOT the
+          audio-codebook temperature/top_p/top_k, which measured no effect
+          on duration stddev) — lowering it from the model's native ~0.9 to
+          the 0.3 default above cut duration stddev from ~0.78s to ~0.22s
+          (~3.6x tighter) with no measurable CER change in testing, AND
+          stayed close to the phoneme-calibrated expected duration on a
+          separate 3-short-sentence runaway stress test (see "greedy" below)
+          where greedy did not. Recommended over "greedy" for that reason —
+          real per-call randomness gives a redraw (e.g. quality=
+          "duration_filter") an actual chance to recover from a bad draw.
+
+          "greedy": argmax decoding + a hard per-channel no-token-reuse mask,
+          plus `audio_repetition_penalty` (the ONE kwarg below this mode
+          honours). RTF ~1.0. NOT proven safe against runaway generation —
+          in live testing this mode ran a short sentence
+          ("多謝晒，今日天氣幾好。", ~3.5s expected) to the full
+          `max_new_frames` ceiling (30.0s) inside one server process, and
+          reproduced that SAME 30s runaway byte-identically on a second call
+          in that same process (SHA256-verified) — because with zero
+          explicit RNG draws, "determinism" here only holds within one
+          running process (CPU multi-threaded float reduction order is not
+          guaranteed identical across separate process launches, and this
+          autoregressive decoder is chaotic enough that an early tie-break
+          difference cascades into a different continue/stop trajectory). A
+          fresh process on the same text did NOT reproduce the runaway
+          (3.20s). Practical consequence: if a long-running server process
+          ever lands on a bad greedy trajectory for some input, EVERY
+          request for that exact (text, ref_audio) in that process is stuck
+          with it — no redraw, no quality= mode, and no restart-free fix can
+          recover it, unlike "fixed"/"full" where real randomness gives a
+          retry an actual chance to land differently. This matches the
+          general finding in the decoding literature that greedy/beam search
+          is prone to degenerate repetition/runaway that sampling avoids
+          (see e.g. Holtzman et al. 2019, "The Curious Case of Neural Text
+          Degeneration"). Use only where byte-for-byte reproducibility
+          matters more than robustness, and pair with your own
+          runaway-duration check — CantoTTS.synthesize() refuses to combine
+          this with `quality=` for exactly this reason (a redraw of a
+          deterministic mode can't help).
         """
         if control is not None or tokens is not None:
             # L2 control renders into the text-side suffix, not the baked
@@ -255,6 +317,8 @@ class OnnxBackend(TTSBackend):
                 "control/tokens are not yet wired through the ONNX backend's baked "
                 "prompt templates; use backends.torch_backend for L2 control today."
             )
+        if sample_mode not in ("fixed", "full", "greedy"):
+            raise ValueError(f"sample_mode must be one of 'fixed', 'full', 'greedy' — got {sample_mode!r}")
 
         phoneme = self.to_phoneme(text)
         prepared = safe_prepare_text(phoneme)
@@ -263,6 +327,8 @@ class OnnxBackend(TTSBackend):
         gen_defaults = self._runtime.manifest["generation_defaults"]
         gen_defaults.update(
             max_new_frames=int(max_new_frames),
+            sample_mode=sample_mode,
+            do_sample=sample_mode != "greedy",
             text_temperature=float(text_temperature),
             text_top_p=float(text_top_p),
             text_top_k=int(text_top_k),

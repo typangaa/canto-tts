@@ -15,7 +15,7 @@ import {
   ChevronUp,
   Gauge,
 } from "lucide-react";
-import { synthesize, synthesizeWithClone, phonemize, type SynthesizeParams, type SynthesizeCloneParams } from "../api";
+import { synthesize, synthesizeWithClone, phonemize, type SynthesizeParams, type SynthesizeCloneParams, type SampleMode } from "../api";
 import { exportAudio, downloadBlob } from "../utils/audioExporter";
 import { VoiceRecorder } from "./VoiceRecorder";
 
@@ -37,13 +37,19 @@ interface StudioConfig {
   maxAttempts: number;
   bestOfN: number;
   asrBackend: string;
+  sampleMode: SampleMode;
 }
 
+// duration_filter (was "none"): a single "fixed"-mode draw's output LENGTH
+// varies run to run (the engine's own randomized stop decision, not tunable
+// without switching sampleMode) -- 1-3 cheap extra draws catches the worst
+// truncation/rambling outliers without the latency cost of sampleMode="full".
 const DEFAULT_STUDIO_CONFIG: StudioConfig = {
-  qualityMode: "none",
+  qualityMode: "duration_filter",
   maxAttempts: 3,
   bestOfN: 4,
   asrBackend: "whisper",
+  sampleMode: "fixed",
 };
 
 function getInitialStudioConfig(): StudioConfig {
@@ -56,6 +62,10 @@ function getInitialStudioConfig(): StudioConfig {
         maxAttempts: typeof parsed.maxAttempts === "number" && !isNaN(parsed.maxAttempts) ? parsed.maxAttempts : DEFAULT_STUDIO_CONFIG.maxAttempts,
         bestOfN: typeof parsed.bestOfN === "number" && !isNaN(parsed.bestOfN) ? parsed.bestOfN : DEFAULT_STUDIO_CONFIG.bestOfN,
         asrBackend: typeof parsed.asrBackend === "string" ? parsed.asrBackend : DEFAULT_STUDIO_CONFIG.asrBackend,
+        sampleMode:
+          parsed.sampleMode === "fixed" || parsed.sampleMode === "full" || parsed.sampleMode === "greedy"
+            ? parsed.sampleMode
+            : DEFAULT_STUDIO_CONFIG.sampleMode,
       };
     }
   } catch {
@@ -70,6 +80,7 @@ export const StudioTab: React.FC<StudioTabProps> = ({ engineUrl }) => {
   const [maxAttempts, setMaxAttempts] = useState<number>(() => getInitialStudioConfig().maxAttempts);
   const [bestOfN, setBestOfN] = useState<number>(() => getInitialStudioConfig().bestOfN);
   const [asrBackend, setAsrBackend] = useState<string>(() => getInitialStudioConfig().asrBackend);
+  const [sampleMode, setSampleMode] = useState<SampleMode>(() => getInitialStudioConfig().sampleMode);
 
   // Sync studio configuration updates to localStorage
   useEffect(() => {
@@ -78,9 +89,19 @@ export const StudioTab: React.FC<StudioTabProps> = ({ engineUrl }) => {
       maxAttempts,
       bestOfN,
       asrBackend,
+      sampleMode,
     };
     localStorage.setItem(STORAGE_KEY_STUDIO_CONFIG, JSON.stringify(config));
-  }, [qualityMode, maxAttempts, bestOfN, asrBackend]);
+  }, [qualityMode, maxAttempts, bestOfN, asrBackend, sampleMode]);
+
+  // quality= redraws are pointless against a deterministic draw (every
+  // redraw reproduces the same output) — the backend rejects this
+  // combination outright, so keep the UI from ever sending it.
+  useEffect(() => {
+    if (sampleMode === "greedy" && qualityMode !== "none") {
+      setQualityMode("none");
+    }
+  }, [sampleMode, qualityMode]);
 
   const [isSynthesizing, setIsSynthesizing] = useState<boolean>(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -222,6 +243,7 @@ export const StudioTab: React.FC<StudioTabProps> = ({ engineUrl }) => {
           max_attempts: maxAttempts,
           best_of_n: bestOfN,
           asr_backend: asrBackend,
+          sample_mode: sampleMode,
         };
         result = await synthesizeWithClone(cloneParams, engineUrl);
       } else {
@@ -231,6 +253,7 @@ export const StudioTab: React.FC<StudioTabProps> = ({ engineUrl }) => {
           max_attempts: maxAttempts,
           best_of_n: bestOfN,
           asr_backend: asrBackend,
+          sample_mode: sampleMode,
         };
         result = await synthesize(params, engineUrl);
       }
@@ -255,7 +278,7 @@ export const StudioTab: React.FC<StudioTabProps> = ({ engineUrl }) => {
       isSynthesizingRef.current = false;
       setIsSynthesizing(false);
     }
-  }, [inputText, refAudioFile, qualityMode, maxAttempts, bestOfN, asrBackend, engineUrl]);
+  }, [inputText, refAudioFile, qualityMode, maxAttempts, bestOfN, asrBackend, sampleMode, engineUrl]);
 
   // Keyboard shortcut Ctrl+Enter or Cmd+Enter to synthesize
   useEffect(() => {
@@ -476,14 +499,30 @@ export const StudioTab: React.FC<StudioTabProps> = ({ engineUrl }) => {
         {/* Generation Controls */}
         <div className="controls-row">
           <div className="control-group">
+            <label className="control-label" title="控制每次生成嘅隨機性同長度穩定度">
+              穩定性：
+            </label>
+            <select
+              value={sampleMode}
+              onChange={(e) => setSampleMode(e.target.value as SampleMode)}
+              className="select-input"
+              title="Fixed＝最快，但每次生成長度會浮動；Full＝慢 2.5-3 倍，長度穩定好多（推薦）；Greedy＝完全一樣，但實測過罕見情況會卡喺長輸出，重試冇用（實驗性）"
+            >
+              <option value="fixed">Fixed（最快，長度會浮動）</option>
+              <option value="full">Full（推薦：慢 2.5-3x，長度穩定好多）</option>
+              <option value="greedy">Greedy（實驗性：可能卡住喺長輸出，冇法靠重試解決）</option>
+            </select>
+          </div>
+
+          <div className="control-group">
             <label className="control-label">Quality 模式：</label>
             <select
               value={qualityMode}
               onChange={(e) => setQualityMode(e.target.value)}
               className="select-input"
             >
-              <option value="none">預設 Single Draw (最快)</option>
-              <option value="duration_filter">Duration Filter (防截斷/防循環)</option>
+              <option value="none">Single Draw (最快，冇重試)</option>
+              <option value="duration_filter">預設 Duration Filter (防截斷/防循環)</option>
               <option value="best_of_n">Best-of-N (ASR 重新排序)</option>
             </select>
           </div>

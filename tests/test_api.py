@@ -99,6 +99,27 @@ def test_synthesize_invalid_asr_backend_returns_422(client):
     assert resp.status_code == 422
 
 
+def test_synthesize_invalid_sample_mode_returns_422(client):
+    """An unknown sample_mode value triggers Pydantic validation -> 422."""
+    resp = client.post("/synthesize", json={"text": "你好", "sample_mode": "bogus"})
+    assert resp.status_code == 422
+
+
+def test_synthesize_sample_mode_reflected_in_header(client):
+    resp = client.post("/synthesize", json={"text": "你好", "sample_mode": "full"})
+    assert resp.status_code == 200
+    assert resp.headers["x-canto-sample-mode"] == "full"
+
+
+def test_synthesize_quality_with_greedy_sample_mode_returns_422(client):
+    """quality= redraws are pointless against a deterministic draw -- rejected up front."""
+    resp = client.post(
+        "/synthesize",
+        json={"text": "你好", "quality": "duration_filter", "sample_mode": "greedy"},
+    )
+    assert resp.status_code == 422
+
+
 def test_synthesize_phonemes_header_is_percent_encoded(client):
     """X-Canto-Phonemes must survive round-trip even when the phoneme string
     contains non-latin-1 characters (real phoneme output preserves full-width
@@ -178,5 +199,23 @@ def test_synthesize_clone_basic_returns_200_with_audio(client):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("audio/")
     assert "x-canto-phonemes" in resp.headers
+    assert resp.headers["x-canto-sample-mode"] == "fixed"
+
+
+def test_synthesize_clone_quality_with_greedy_sample_mode_returns_422(client):
+    """quality= redraws are pointless against a deterministic draw -- rejected up front."""
+    import io
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 1600)
+    buf.seek(0)
+
+    files = {"ref_audio": ("ref.wav", buf.getvalue(), "audio/wav")}
+    data = {"text": "你好", "quality": "duration_filter", "sample_mode": "greedy"}
+    resp = client.post("/synthesize-clone", data=data, files=files)
+    assert resp.status_code == 422
 
 
